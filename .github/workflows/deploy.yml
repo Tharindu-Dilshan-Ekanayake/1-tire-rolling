@@ -1,0 +1,97 @@
+# Ships +1 Slide Downhill to Bloxity Legion: the dev branch to the dev channel, main to prod.
+#
+#   server   -> Docker image in this repo's GitHub Container Registry, then Legion rolls
+#               it out (https://1-slide-downhill.host.bloxity.io / .dev.host.bloxity.io)
+#   frontend -> the built client, served at https://1-slide-downhill.play.bloxity.io
+#               (prod) and https://1-slide-downhill.dev.play.bloxity.io (dev)
+#
+# Needs one repository secret: LEGION_DEPLOY_TOKEN (Settings -> Secrets and variables
+# -> Actions). After the first run, make the ghcr.io package public so Legion can pull
+# it (repo -> Packages -> 1-slide-downhill-server -> Package settings -> Change visibility).
+
+name: Deploy to Bloxity Legion
+
+on:
+  push:
+    branches: [dev, main]
+  workflow_dispatch:
+
+env:
+  GAME_ID: 1-slide-downhill
+  # Players per room (the Colyseus room's maxClients); a full pod makes Legion start another.
+  SEAT_CAP: 8
+
+concurrency:
+  group: deploy-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      channel: ${{ steps.meta.outputs.channel }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Channel and image name
+        id: meta
+        run: |
+          if [ "$GITHUB_REF_NAME" = "main" ]; then channel=prod; else channel=dev; fi
+          owner="${GITHUB_REPOSITORY_OWNER,,}"
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/$owner/$GAME_ID-server:$channel-$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push the server image
+        run: |
+          docker build -f server/Dockerfile -t "${{ steps.meta.outputs.image }}" .
+          docker push "${{ steps.meta.outputs.image }}"
+
+      - name: Roll it out on Legion
+        env:
+          LEGION_DEPLOY_TOKEN: ${{ secrets.LEGION_DEPLOY_TOKEN }}
+        run: |
+          curl -sS --fail-with-body -X POST "https://legion.bloxity.io/v1/apps/$GAME_ID/deploy" \
+            -H "Authorization: Bearer $LEGION_DEPLOY_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d "{\"channel\":\"${{ steps.meta.outputs.channel }}\",\"image\":\"${{ steps.meta.outputs.image }}\",\"version\":\"$GITHUB_SHA\",\"seatCap\":$SEAT_CAP}"
+
+  frontend:
+    needs: server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Build the client
+        working-directory: client
+        env:
+          # Join through Legion's matchmaker; the Bloxity SDK identifies the game by slug.
+          VITE_LEGION_GAME_ID: ${{ env.GAME_ID }}
+          VITE_GAME_SLUG: ${{ env.GAME_ID }}
+          VITE_BLOXITY_PORTAL_URL: https://bloxity.io
+          VITE_BLOXITY_API_URL: https://api.bloxity.io
+        run: |
+          npm ci
+          npm run build
+
+      - name: Upload it to Legion
+        env:
+          LEGION_DEPLOY_TOKEN: ${{ secrets.LEGION_DEPLOY_TOKEN }}
+        run: |
+          (cd client/dist && zip -qr ../../build.zip .)
+          curl -sS --fail-with-body -X POST \
+            "https://api.bloxity.io/v1/hosting/games/$GAME_ID/frontend?channel=${{ needs.server.outputs.channel }}&version=$GITHUB_SHA" \
+            -H "Authorization: Bearer $LEGION_DEPLOY_TOKEN" \
+            -H 'Content-Type: application/zip' \
+            --data-binary @build.zip

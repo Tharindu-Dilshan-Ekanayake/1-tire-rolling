@@ -1,0 +1,470 @@
+import {
+  Box3,
+  BufferAttribute,
+  BufferGeometry,
+  Matrix4,
+  MeshLambertMaterial,
+  NearestFilter,
+  Quaternion,
+  SkinnedMesh,
+  SRGBColorSpace,
+  Vector3,
+} from 'three'
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
+
+import { BACK_BONE, HAT_BONE, NECK_OFFSET_BONE, PART_SLOTS } from '../bloxity/avatarAssets'
+import { computePose, POSED_BONES } from './playerPose'
+
+/**
+ * Rig manipulation for the base `player.glb` character.
+ *
+ * The rig's real structure (confirmed by reading player.glb directly):
+ *   character
+ *     - default_arm_L / default_arm_R / default_head
+ *     - default_leg_L / default_leg_R / default_torso   (6 SkinnedMeshes, 1 skeleton)
+ *     - Rig1
+ *         - Spine1 > Spine2 > { ArmL_Offset > ArmL1 > ArmL2,
+ *                               ArmR_Offset > ArmR1 > ArmR2,
+ *                               Neck_Offset > Neck1 }
+ *         - LegL_Offset > LegL1 > LegL2, LegR_Offset > LegR1 > LegR2
+ *
+ * Two consequences drive everything below:
+ *  1. Body parts are NOT attached to bones. Each is a separate SkinnedMesh sharing one
+ *     skeleton, so equipping a part means swapping that mesh's geometry (remapping
+ *     skin indices into the base skeleton's bone order first).
+ *  2. Accessories DO attach to bones: hats to `Neck1`, back items to `Spine2`.
+ *
+ * player.glb ships no animation clips, so the character is posed, not animated.
+ */
+
+/** The forearm bone; anything held rides at the hand on its end. */
+const HAND_BONE = 'ArmR2'
+
+/**
+ * Walks the loaded rig and collects everything later operations need.
+ *
+ * @param {import('three').Object3D} root
+ */
+export function collectRig(root) {
+  const rig = {
+    root,
+    skeleton: null,
+    /** slot -> SkinnedMesh */
+    partMeshes: {},
+    /** slot -> the pristine geometry to restore on unequip */
+    originalGeometries: {},
+    /** bone name -> { bone, origPos, origQuat, origScale } */
+    bones: {},
+    hatBone: null,
+    backBone: null,
+    neckOffsetBindY: 0,
+    skinnedMeshes: [],
+    /** Rest Y of the character root, so the run-cycle bob can return to it. */
+    rootRestY: root.position.y,
+    /** Right forearm, the palm on it (bone-local) and its rest orientation, inverted. */
+    handBone: null,
+    handPoint: null,
+    handRestInv: null,
+  }
+
+  const meshBySlot = new Map(
+    Object.entries(PART_SLOTS).map(([slot, cfg]) => [cfg.mesh.toLowerCase(), slot]),
+  )
+
+  root.traverse((node) => {
+    if (node.isSkinnedMesh) {
+      node.castShadow = true
+      node.receiveShadow = true
+      rig.skinnedMeshes.push(node)
+      if (!rig.skeleton) rig.skeleton = node.skeleton
+
+      const slot = meshBySlot.get((node.name || '').toLowerCase())
+      if (slot) {
+        rig.partMeshes[slot] = node
+        rig.originalGeometries[slot] = node.geometry.clone()
+      }
+    } else if (node.isMesh) {
+      node.castShadow = true
+      node.receiveShadow = true
+    }
+  })
+
+  const skeleton = rig.skeleton
+  if (skeleton) {
+    for (const bone of skeleton.bones) {
+      // Proportions are re-applied every frame from these rest values.
+      bone.matrixAutoUpdate = true
+      rig.bones[bone.name] = {
+        bone,
+        origPos: bone.position.clone(),
+        origQuat: bone.quaternion.clone(),
+        origScale: bone.scale.clone(),
+      }
+    }
+
+    // Bone local axes are NOT world-aligned in this rig: a limb bone's local X
+    // points along world -Z and its local Z along world -X, so rotating a leg about
+    // its local X swings it sideways instead of forward/back. The offsets differ per
+    // bone (Spine1 is identity, ArmL2 is off by ~14 degrees), so rather than hardcode
+    // an axis, record for each bone the local-space axis matching each character-space
+    // axis and animate about those.
+    root.updateMatrixWorld(true)
+    const rootQuat = new Quaternion()
+    root.getWorldQuaternion(rootQuat)
+    const rootQuatInv = rootQuat.invert()
+    const boneWorld = new Quaternion()
+
+    for (const bone of skeleton.bones) {
+      const entry = rig.bones[bone.name]
+      if (!entry) continue
+      bone.getWorldQuaternion(boneWorld)
+      // Bone orientation relative to the character, then inverted: this maps a
+      // character-space axis into the bone's own local frame.
+      const relInv = rootQuatInv.clone().multiply(boneWorld).invert()
+      /** Local axis to rotate about for forward/back swing. */
+      entry.axisX = new Vector3(1, 0, 0).applyQuaternion(relInv).normalize()
+      /** Local axis to rotate about for lateral sway. */
+      entry.axisZ = new Vector3(0, 0, 1).applyQuaternion(relInv).normalize()
+      /** Local axis to rotate about for a twist. */
+      entry.axisY = new Vector3(0, 1, 0).applyQuaternion(relInv).normalize()
+    }
+
+    // The palm: the bottom of the right arm mesh, a little up from its end, found in
+    // the bind pose and kept in the forearm bone's frame so it follows the arm.
+    const handBone = skeleton.bones.find((b) => b.name === HAND_BONE)
+    const arm = rig.partMeshes.arm_R
+    if (handBone && arm) {
+      const box = new Box3().setFromObject(arm)
+      const palm = new Vector3((box.min.x + box.max.x) / 2, box.min.y + (box.max.y - box.min.y) * 0.06, (box.min.z + box.max.z) / 2)
+      rig.handBone = handBone
+      rig.handPoint = handBone.worldToLocal(palm)
+      rig.handRestInv = rootQuatInv.clone().multiply(handBone.getWorldQuaternion(new Quaternion())).invert()
+    }
+
+    rig.hatBone = skeleton.bones.find((b) => b.name === HAT_BONE) || null
+    rig.backBone = skeleton.bones.find((b) => b.name === BACK_BONE) || null
+
+    const neckIndex = skeleton.bones.findIndex((b) => b.name === NECK_OFFSET_BONE)
+    if (neckIndex >= 0) {
+      // elements[13] is the Y translation of the inverted bind matrix.
+      rig.neckOffsetBindY = skeleton.boneInverses[neckIndex].clone().invert().elements[13]
+    }
+  }
+
+  return rig
+}
+
+/**
+ * Bloxity textures are authored unflipped and pixel-art filtered.
+ *
+ * They are also sRGB images. A plain TextureLoader leaves them tagged as linear, which
+ * makes three skip the sRGB decode and the avatar renders pale and washed out.
+ */
+export function configureAvatarTexture(texture) {
+  if (!texture) return texture
+  texture.colorSpace = SRGBColorSpace
+  texture.flipY = false
+  texture.magFilter = NearestFilter
+  texture.minFilter = NearestFilter
+  texture.needsUpdate = true
+  return texture
+}
+
+/**
+ * Applies the skin texture to every skinned mesh of the base body.
+ * The base body ships with an empty texture, so this always runs - with skin "0"
+ * standing in when nothing is equipped.
+ */
+export function applySkin(rig, texture) {
+  if (!texture) return
+  for (const mesh of rig.skinnedMeshes) {
+    if (!mesh.material) continue
+    mesh.material.map = texture
+    mesh.material.needsUpdate = true
+  }
+}
+
+/**
+ * Swaps a body part's geometry onto its base skinned mesh.
+ *
+ * A part GLB carries its own skeleton whose bone *order* may differ from the base
+ * rig's. Its `skinIndex` attribute therefore has to be remapped by bone name, or the
+ * limb deforms against the wrong bones.
+ *
+ * @param {object} rig from `collectRig`
+ * @param {string} slot key of PART_SLOTS
+ * @param {import('three').Object3D|null} partScene loaded GLB scene, or null to reset
+ */
+export function applyPart(rig, slot, partScene) {
+  const targetMesh = rig.partMeshes[slot]
+  if (!targetMesh) return
+
+  // Unequipped / failed download: restore the part baked into player.glb.
+  if (!partScene) {
+    const original = rig.originalGeometries[slot]
+    if (original && targetMesh.geometry !== original) targetMesh.geometry = original
+    return
+  }
+
+  let skinnedSource = null
+  let plainSource = null
+  partScene.traverse((node) => {
+    if (node.isSkinnedMesh && !skinnedSource) skinnedSource = node
+    else if (node.isMesh && !plainSource) plainSource = node
+  })
+
+  if (!skinnedSource) {
+    // Some parts ship as plain meshes; use them as-is.
+    if (plainSource) targetMesh.geometry = plainSource.geometry
+    return
+  }
+
+  const baseSkeleton = rig.skeleton
+  if (!baseSkeleton || !skinnedSource.skeleton) {
+    targetMesh.geometry = skinnedSource.geometry
+    return
+  }
+
+  const geometry = skinnedSource.geometry.clone()
+
+  const baseIndexByName = new Map()
+  baseSkeleton.bones.forEach((bone, i) => baseIndexByName.set(bone.name, i))
+
+  const remap = new Map()
+  skinnedSource.skeleton.bones.forEach((bone, i) => {
+    const baseIndex = baseIndexByName.get(bone.name)
+    if (baseIndex !== undefined) remap.set(i, baseIndex)
+  })
+
+  const skinIndex = geometry.getAttribute('skinIndex')
+  if (skinIndex) {
+    const array = skinIndex.array
+    for (let i = 0; i < array.length; i += 1) {
+      const mapped = remap.get(array[i])
+      if (mapped !== undefined) array[i] = mapped
+    }
+    skinIndex.needsUpdate = true
+  }
+
+  targetMesh.geometry = geometry
+}
+
+/** What the merged body keeps of each part, and each attribute's size. */
+const BODY_ATTRIBUTES = [
+  ['position', 3],
+  ['normal', 3],
+  ['uv', 2],
+  ['skinIndex', 4],
+  ['skinWeight', 4],
+]
+
+/**
+ * A part's geometry as plain, non-indexed float attributes: parts come from different
+ * GLBs (indexed or not, interleaved or not, 8- or 16-bit skin indices), and only
+ * matching layouts merge.
+ */
+function plainGeometry(source) {
+  const g = source.index ? source.toNonIndexed() : source.clone()
+  if (!g.getAttribute('normal')) g.computeVertexNormals()
+  const count = g.getAttribute('position').count
+  const out = new BufferGeometry()
+  for (const [name, size] of BODY_ATTRIBUTES) {
+    const attr = g.getAttribute(name)
+    const array = new Float32Array(count * size)
+    if (attr) {
+      for (let i = 0; i < count; i += 1) {
+        for (let k = 0; k < size; k += 1) array[i * size + k] = attr.getComponent(i, k)
+      }
+    } else if (name === 'skinWeight') {
+      // An unskinned part follows its first bone fully.
+      for (let i = 0; i < count; i += 1) array[i * 4] = 1
+    }
+    out.setAttribute(name, new BufferAttribute(array, size))
+  }
+  g.dispose()
+  return out
+}
+
+/**
+ * Merges the six body parts into one skinned mesh on the same skeleton, so a whole
+ * character is one draw call instead of six. The parts stay (hidden) as the source for
+ * the next re-assembly. Call after the parts and skin are applied; returns the body,
+ * or null if there's nothing to merge.
+ */
+export function mergeBody(rig) {
+  const parts = rig.skinnedMeshes
+  if (!rig.skeleton || parts.length === 0) return null
+  const pieces = parts.map((mesh) => plainGeometry(mesh.geometry))
+  const geometry = mergeGeometries(pieces, false)
+  for (const piece of pieces) piece.dispose()
+  if (!geometry) return null
+  const body = new SkinnedMesh(geometry, new MeshLambertMaterial({ map: parts[0].material?.map ?? null }))
+  body.name = 'merged_body'
+  body.castShadow = true
+  body.receiveShadow = true
+  // Skinned bounds don't follow the pose; the avatar is always near the camera anyway.
+  body.frustumCulled = false
+  parts[0].parent.add(body)
+  body.bind(rig.skeleton, parts[0].bindMatrix)
+  for (const mesh of parts) mesh.visible = false
+  return body
+}
+
+/** Removes and frees a body made by mergeBody. */
+export function disposeMergedBody(body) {
+  if (!body) return
+  body.parent?.remove(body)
+  body.geometry.dispose()
+  body.material.dispose()
+}
+
+/**
+ * Attaches a hat or back accessory to its bone.
+ * Offsets are the SDK's own: hats sit at y=0.8 on `Neck1`, back items at the origin
+ * of `Spine2`.
+ */
+export function attachAccessory(rig, kind, object) {
+  const bone = kind === 'hat' ? rig.hatBone : rig.backBone
+  if (!object || !bone) return null
+
+  object.scale.setScalar(1)
+  object.position.set(0, kind === 'hat' ? 0.8 : 0, 0)
+  object.traverse((child) => {
+    if (child.isMesh) child.castShadow = true
+  })
+
+  bone.add(object)
+  return object
+}
+
+/**
+ * Applies Bloxity body proportions.
+ *
+ * Must run every frame: each bone is reset to its rest transform before the
+ * multipliers are re-applied, which is what makes the result idempotent and lets
+ * proportion changes take effect live.
+ *
+ * `height`, `armLength`, `headScale` and `neckHeight` are applied exactly as the
+ * Bloxity portal does, so the in-game body matches the preview. The remaining three
+ * (`shoulderWidth`, `torsoScaleX`, `legOffsetX`) are not implemented in the SDK's
+ * preview renderer; they are applied here in the spirit of their names and are the
+ * ones to sanity-check against the portal.
+ */
+export function applyProportions(rig, proportions) {
+  const skeleton = rig.skeleton
+  if (!skeleton) return
+  // Runs even with no proportions (another player's look not in yet): the reset to the
+  // rest pose below is what keeps the per-frame posing from piling up rotations.
+  proportions ??= {}
+
+  const height = proportions.height ?? 1
+  const armLength = proportions.armLength ?? 1
+  const headScale = proportions.headScale ?? 1
+  const neckHeight = proportions.neckHeight ?? 1
+  const shoulderWidth = proportions.shoulderWidth ?? 1
+  const torsoScaleX = proportions.torsoScaleX ?? 1
+  const legOffsetX = proportions.legOffsetX ?? 1
+
+  // Overall height is a scale on the character root, not on a bone.
+  rig.root.scale.set(1, height, 1)
+
+  for (const bone of skeleton.bones) {
+    const rest = rig.bones[bone.name]
+    if (!rest) continue
+
+    const { origScale, origPos, origQuat } = rest
+    bone.position.copy(origPos)
+    bone.quaternion.copy(origQuat)
+    bone.scale.copy(origScale)
+
+    const name = bone.name
+
+    if (name.startsWith('Arm')) {
+      bone.scale.y = origScale.y * armLength
+      // Not in the SDK preview: widen the shoulders by pushing the arm roots out.
+      if (name === 'ArmL_Offset' || name === 'ArmR_Offset') {
+        bone.position.x = origPos.x * shoulderWidth
+      }
+    } else if (name === NECK_OFFSET_BONE) {
+      // Keeps the head sitting on the neck as height/headScale change, then applies
+      // neckHeight against the bind-pose offset.
+      bone.position.y += (height - headScale) * origPos.y
+      bone.position.y += rig.neckOffsetBindY * (neckHeight - 1) * 0.8
+    } else if (name === HAT_BONE) {
+      // Divided by height so the head stays uniform inside the stretched root.
+      bone.scale.set(
+        origScale.x * headScale,
+        origScale.y * (headScale / height),
+        origScale.z * headScale,
+      )
+    } else if (name === BACK_BONE) {
+      // Not in the SDK preview: torso width.
+      bone.scale.x = origScale.x * torsoScaleX
+    } else if (name === 'LegL_Offset' || name === 'LegR_Offset') {
+      // Not in the SDK preview: leg splay, mirrored about the rig centre.
+      bone.position.x = origPos.x * legOffsetX
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Procedural animation
+ *
+ * player.glb ships zero animation clips, so the body is posed directly on the bones
+ * from the shared pose (playerPose.js). Rotations are *multiplied onto* whatever
+ * applyProportions() just wrote, so this must run immediately after it in the same
+ * frame - proportions reset each bone to its rest pose, the clean base a pose needs.
+ * ------------------------------------------------------------------------- */
+
+const _animQ = new Quaternion()
+
+/** Rotates a bone about one of its precomputed character-space axes. */
+function rotateBone(rig, name, which, angle) {
+  if (!angle) return
+  const entry = rig.bones[name]
+  const axis = entry?.[which]
+  if (!axis) return
+  entry.bone.quaternion.multiply(_animQ.setFromAxisAngle(axis, angle))
+}
+
+/**
+ * Poses the rig for the current motion state.
+ *
+ * @param {object} rig from `collectRig`
+ * @param {object} motion see `computePose`
+ * @param {number} unitsPerMetre rig units in one world metre, for the body's lift
+ */
+export function animateRig(rig, motion, unitsPerMetre = 1) {
+  if (!rig?.skeleton || !motion) return
+  const pose = computePose(motion)
+  for (const name of POSED_BONES) {
+    const joint = pose.bones[name]
+    rotateBone(rig, name, 'axisX', joint.swing)
+    rotateBone(rig, name, 'axisZ', joint.sway)
+    rotateBone(rig, name, 'axisY', joint.twist)
+  }
+  rig.root.position.y = rig.rootRestY + pose.lift * unitsPerMetre
+}
+
+const _parentInv = new Matrix4()
+const _boneQ = new Quaternion()
+const _parentQ = new Quaternion()
+const _scratchP = new Vector3()
+const _scratchS = new Vector3()
+
+/**
+ * Puts `hand` (an object in one of the avatar's ancestors) on the palm, turned by as
+ * much as the forearm has turned from its rest pose. Run after `animateRig`.
+ */
+export function placeHand(rig, hand) {
+  const bone = rig.handBone
+  const parent = hand?.parent
+  if (!bone || !parent) return
+  // Refreshes the whole chain down to the forearm, the hand's parent included.
+  bone.updateWorldMatrix(true, false)
+  _parentInv.copy(parent.matrixWorld).invert()
+  hand.position.copy(rig.handPoint).applyMatrix4(bone.matrixWorld).applyMatrix4(_parentInv)
+  bone.matrixWorld.decompose(_scratchP, _boneQ, _scratchS)
+  parent.matrixWorld.decompose(_scratchP, _parentQ, _scratchS)
+  hand.quaternion.copy(_parentQ.invert()).multiply(_boneQ).multiply(rig.handRestInv)
+}
