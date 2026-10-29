@@ -128,42 +128,39 @@ const star = svg(
   `<path d="M50 8l12 25 27 4-20 19 5 27-24-13-24 13 5-27-20-19 27-4z" fill="#ffffff" stroke="${OUT}" stroke-width="6" stroke-linejoin="round"/>`,
 )
 
-/**
- * A red sled racing up and to the right: curled nose, yellow stripe, a silver rail on
- * top and runners underneath, with speed lines and a puff of snow behind it. Drawn side
- * on, nose right, then tilted and fitted into the box.
- */
-const SLED_RUNNER = 'M24 71H67C79 71 87 63 89 51'
-const SLED_RAIL = 'M26 43V33H58V43'
-const slide = svg(
-  `<g transform="translate(-1.22 27.91) scale(0.821) rotate(-24)">
-    <g stroke-linecap="round">
-      <path d="M3 40H11M1 51H8M3 62H10" stroke="${OUT}" stroke-width="9"/>
-      <path d="M3 40H11M1 51H8M3 62H10" stroke="#fff" stroke-width="4"/>
-    </g>
-    <g fill="#fff" stroke="${OUT}" stroke-width="4">
-      <circle cx="12" cy="72" r="6"/><circle cx="21" cy="77" r="4.5"/>
-    </g>
-    <g fill="url(#sl-run)" stroke="${OUT}" stroke-width="4" stroke-linejoin="round">
-      <rect x="29" y="57" width="7" height="14" rx="2"/><rect x="51" y="57" width="7" height="14" rx="2"/>
-    </g>
-    <path d="${SLED_RUNNER}" fill="none" stroke="${OUT}" stroke-width="13" stroke-linecap="round"/>
-    <path d="${SLED_RUNNER}" fill="none" stroke="url(#sl-run)" stroke-width="6" stroke-linecap="round"/>
-    <path d="${SLED_RAIL}" fill="none" stroke="${OUT}" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="${SLED_RAIL}" fill="none" stroke="url(#sl-run)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
-    <path d="M20 42L60 42C68 42 72 37 72 29C72 22 76 18 81 18.5C88 19 92 27 91 37C89 53 80 60 66 60L20 60C13 60 11 56 11 51C11 46 13 42 20 42Z" fill="url(#sl-deck)" stroke="${OUT}" stroke-width="6" stroke-linejoin="round"/>
-    <rect x="19" y="48" width="47" height="7" rx="3.5" fill="#ffd23a" stroke="${OUT}" stroke-width="3"/>
-    <path d="M20 45.5H60M76 25C78 22 83 21.5 86 24.5" fill="none" stroke="#fff" stroke-width="3.2" stroke-linecap="round" opacity=".8"/>
-  </g>`,
-  vgrad('sl-deck', [
-    [0, '#ff8a76'],
-    [0.4, '#ff3d3a'],
-    [1, '#c3102c'],
-  ]) +
-    vgrad('sl-run', [
-      [0, '#ffffff'],
-      [1, '#9fc3e6'],
-    ]),
+/** The Health heart, as in the reference: glossy red with a white shine and a dark outline. */
+const HEART_PATH = 'M50 88C44 82 12 62 9 38 7 22 18 11 31 11c9 0 15 5 19 12 4-7 10-12 19-12 13 0 24 11 22 27-3 24-35 44-41 50z'
+const heart = svg(
+  `<path d="${HEART_PATH}" fill="url(#ht-g)" stroke="${OUT}" stroke-width="6" stroke-linejoin="round"/>
+  <path d="M22 30c2-7 8-10 14-9" fill="none" stroke="#fff" stroke-width="6" stroke-linecap="round" opacity=".85"/>
+  <circle cx="20" cy="40" r="3.4" fill="#fff" opacity=".85"/>`,
+  vgrad('ht-g', [
+    [0, '#ff8aa4'],
+    [0.45, '#ff3b5c'],
+    [1, '#c4102e'],
+  ]),
+)
+
+/** A chunky tire seen side on: knobbly black tread round a blue rim with a gold hub. */
+const tireKnobs = Array.from({ length: 16 }, (_, i) => {
+  const a = (i / 16) * Math.PI * 2
+  const x = 50 + Math.cos(a) * 41
+  const y = 50 + Math.sin(a) * 41
+  return `<rect x="${(x - 6).toFixed(1)}" y="${(y - 5).toFixed(1)}" width="12" height="10" rx="2" transform="rotate(${((a * 180) / Math.PI).toFixed(1)} ${x.toFixed(1)} ${y.toFixed(1)})"/>`
+}).join('')
+const tire = svg(
+  `<g fill="#26282e" stroke="${OUT}" stroke-width="4">${tireKnobs}</g>
+  <circle cx="50" cy="50" r="38" fill="#2b2e35" stroke="${OUT}" stroke-width="6"/>
+  <circle cx="50" cy="50" r="23" fill="url(#ti-g)" stroke="${OUT}" stroke-width="5"/>
+  <g stroke="#fff" stroke-width="4.5" stroke-linecap="round">
+    <path d="M50 31v13M50 56v13M31 50h13M56 50h13M37 37l8 8M55 55l8 8M63 37l-8 8M45 55l-8 8"/>
+  </g>
+  <circle cx="50" cy="50" r="7" fill="#ffd23a" stroke="${OUT}" stroke-width="4"/>
+  <path d="M24 34c4-8 11-13 19-15" fill="none" stroke="#fff" stroke-width="4" stroke-linecap="round" opacity=".5"/>`,
+  vgrad('ti-g', [
+    [0, '#8fe0ff'],
+    [1, '#1f7fe6'],
+  ]),
 )
 
 /** A round potion flask with a cork, filled with `liquid` and a small badge icon. */
@@ -188,12 +185,11 @@ const potionWins = potion(
   `<path d="M38 62h24v6c0 7-5 12-12 12s-12-5-12-12z" fill="#ffd23a" stroke="${OUT}" stroke-width="3.5" stroke-linejoin="round"/>
    <rect x="42" y="80" width="16" height="6" rx="2" fill="#ffd23a" stroke="${OUT}" stroke-width="3"/>`,
 )
-const potionSlide = potion(
-  'ps',
-  '#ffb347',
-  '#ff5a1e',
-  `<g transform="rotate(-30 50 72)"><rect x="32" y="66" width="36" height="12" rx="6" fill="#ff3b3b" stroke="${OUT}" stroke-width="3.5"/>
-   <rect x="38" y="70" width="24" height="4" rx="2" fill="#ffd23a"/></g>`,
+const potionHealth = potion(
+  'ph',
+  '#ff8aa4',
+  '#d4142a',
+  `<path d="M50 84c-3-3-14-10-15-18-1-5 3-9 7-9 3 0 6 2 8 5 2-3 5-5 8-5 4 0 8 4 7 9-1 8-12 15-15 18z" fill="#ffffff" stroke="${OUT}" stroke-width="3.5" stroke-linejoin="round"/>`,
 )
 
 /** A spotted egg in the given colours. */
@@ -278,9 +274,10 @@ export const ICON_SVGS = {
   store,
   calendar,
   star,
-  slide,
+  heart,
+  tire,
   potionWins,
-  potionSlide,
+  potionHealth,
   close,
   arrowDown,
   check,
@@ -293,7 +290,7 @@ export const EGG_COLORS = {
   meadow: ['#7cf08a', '#2fae4a', '#c8ffd0'],
   sunset: ['#ffc07a', '#ff6a3d', '#ffe2b8'],
   unicorn: ['#f6eaff', '#d3b4ff', '#ffd1f0'],
-  demon: ['#4a1d2e', '#1a0710', '#ff4a1c'],
+  volcano: ['#5a3a30', '#2a1814', '#ff6a14'],
 }
 
 const urlCache = new Map()

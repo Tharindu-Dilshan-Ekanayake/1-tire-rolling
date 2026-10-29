@@ -2,19 +2,20 @@ import { useFrame } from '@react-three/fiber'
 import { Suspense, useEffect, useMemo, useRef } from 'react'
 import { Quaternion, Vector3 } from 'three'
 
-import { isTreadmillUnlocked } from '@shared/logic'
-import { clampToWalkable, groundHeightAt, STATIC_COLLIDERS, treadmillAt } from '@shared/world'
+import { isPadUnlocked } from '@shared/logic'
+import { clampToWalkable, groundHeightAt, padAt, STATIC_COLLIDERS } from '@shared/world'
 
 import { sfx } from '../audio/sfx'
 import { getGame } from '../store/game'
 import { getQuality } from '../store/quality'
 import ErrorBoundary from '../ui/ErrorBoundary'
-import { createBoardModel } from './board'
 import FallbackAvatar from './FallbackAvatar'
+import { PAD_TIRE_SIZE, padBounce, padTireTop } from './padBounce'
 import PlayerAvatar from './PlayerAvatar'
+import { PUSH_AHEAD, TIRE_SIZE } from './roll/path'
+import { roll } from './roll/rollControl'
 import { runtime } from './runtime'
-import { BOARD_QUAT, LEAP, riderBody, rideTurn, standSide } from './slide/path'
-import { advanceSlide, slide } from './slide/slideControl'
+import { createTireModel, tireWidth } from './tire'
 import useKeyboard from './useKeyboard'
 
 export const PLAYER_HEIGHT = 1.8
@@ -24,10 +25,13 @@ const WALK_SPEED = 10.875
 const ACCELERATION = 16
 const GRAVITY = 32
 const JUMP_SPEED = 10.5
-/** Ledges up to this high are walked straight onto (the shop's back stage). */
+/** Ledges up to this high are walked straight onto (the showroom's back stage). */
 const STEP_UP = 1.05
-/** Facing the console at a treadmill's west end. */
-const TREADMILL_YAW = -Math.PI / 2
+/** Training on a pad: bouncing on your tire, facing out over the plaza. */
+const PAD_YAW = Math.PI / 2
+/** A tire lying flat: its axle turned from X to straight up. */
+const LIE_FLAT = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2)
+const bounce = { height: 0, vy: 0, squash: 0 }
 
 // Scratch objects, reused each frame so the loop allocates nothing.
 const _input = new Vector3()
@@ -38,9 +42,9 @@ const _targetQuat = new Quaternion()
 const _up = new Vector3(0, 1, 0)
 const _clamped = { x: 0, z: 0 }
 
-/** In the lobby, standing on the SLIDE ZONE, the board hovers ready this far ahead. */
-const READY_AHEAD = new Vector3(0, 0.3, -LEAP)
-const _launchFrom = new Quaternion()
+/** Standing on the ROLL ZONE, your tire waits upright this far ahead of you. */
+const READY_AHEAD = new Vector3(0, TIRE_SIZE * 0.85, -PUSH_AHEAD)
+const READY_SIZE = TIRE_SIZE * 0.85
 /** 0 -> 1 with a springy overshoot, for things popping into view. */
 const easeOutBack = (x) => {
   const t = Math.min(1, Math.max(0, x)) - 1
@@ -85,9 +89,10 @@ function pushOut(pos, rect) {
  * rectangular walls, which a circle-vs-rect push-out handles exactly. That saves the
  * ~2 MB Rapier WASM download and keeps the active rigid body count at zero.
  *
- * While you slide, your logical position stays on the SLIDE ZONE (what the server
- * checks) and only the drawn character rides the board down the hill. On a treadmill
- * you run on the spot, facing its console.
+ * While your tire rolls you stay on the ROLL ZONE (what the server checks), watching it
+ * go; Roll.jsx draws the tire and moves the camera. On a training pad your tire lies
+ * flat and you bounce on it like a trampoline. On the roll zone your tire waits in
+ * front of you, ready.
  *
  * Reads and writes `runtime.player`; never touches React state per frame.
  *
@@ -96,17 +101,13 @@ function pushOut(pos, rect) {
 export function Player({ onAvatarReady }) {
   const groupRef = useRef(null)
   const visualRef = useRef(null)
-  const boardRef = useRef(null)
+  const tireRef = useRef(null)
   const keys = useKeyboard()
   const velocity = useRef(new Vector3())
   const vy = useRef(0)
-  const wasSliding = useRef(false)
-  /**
-   * This slide's bits Player keeps: whether the board was already out, the skid's side,
-   * the ready hover (0-1) and how far into the jump pose (0-1).
-   */
-  const ride = useRef({ popped: false, side: 1, ready: 0, air: 0 })
-  const board = useMemo(() => createBoardModel(), [])
+  /** The waiting tire's pop-in (0-1) on the roll zone. */
+  const ready = useRef(0)
+  const tire = useMemo(() => createTireModel({ glowSize: 2.6 }), [])
 
   /** Handed to the avatar so it can pose itself. A ref: written every frame. */
   const motionRef = useRef({
@@ -116,10 +117,9 @@ export function Player({ onAvatarReady }) {
     maxSpeed: WALK_SPEED,
     vy: 0,
     stride: 0,
-    sliding: false,
   })
 
-  // The blob shadow follows what's drawn, which is down the hill while you slide.
+  // The blob shadow follows the character.
   const shownAt = useMemo(() => new Vector3().copy(runtime.player.position), [])
   useEffect(() => {
     const caster = { position: shownAt, size: 1.1 }
@@ -127,7 +127,7 @@ export function Player({ onAvatarReady }) {
     return () => runtime.shadowCasters.delete(caster)
   }, [shownAt])
 
-  useEffect(() => () => board.dispose(), [board])
+  useEffect(() => () => tire.dispose(), [tire])
 
   useFrame((state, rawDelta) => {
     const delta = Math.min(rawDelta, 0.05)
@@ -140,85 +140,22 @@ export function Player({ onAvatarReady }) {
 
     const group = groupRef.current
     const visual = visualRef.current
-    const b = boardRef.current
+    const t = tireRef.current
 
-    // --- Riding the slide ------------------------------------------------------
-    if (slide.active && group && visual && b) {
-      advanceSlide(state.clock.elapsedTime)
-      if (!wasSliding.current) {
-        // Pressed SLIDE: remember which way you faced, and whether the board was
-        // already out (hovering ready) or has to pop out now.
-        wasSliding.current = true
-        _launchFrom.copy(visual.quaternion)
-        ride.current.popped = b.visible
-        ride.current.side = standSide(slide.distance)
-      }
-      player.anim = 'slide'
-      player.speed = 0
-      velocity.current.set(0, 0, 0)
-      vy.current = 0
-      // The group is the board's underside: skids and leans turn the board and rider together.
-      group.position.copy(slide.position)
-      rideTurn(slide, group.quaternion)
-      shownAt.copy(slide.position)
-
-      b.visible = true
-      b.position.set(0, 0, 0)
-      b.quaternion.copy(BOARD_QUAT)
-      b.scale.setScalar(ride.current.popped ? 1 : easeOutBack(slide.launch / 0.35))
-      b.setBoard(getGame().profile.equippedBoard)
-      b.setGlowSize(2.6 * getQuality().boardGlow)
-
-      // Diving on, lying on it, getting up to cheer: placed on the board's frame.
-      riderBody(slide, group.quaternion, _launchFrom, ride.current.side, visual.position, visual.quaternion)
-      // In the air: spread out (eased in and out); landing: a squash. On the ground at
-      // speed the board shudders a little.
-      const r = ride.current
-      r.air += ((slide.airborne ? 1 : 0) - r.air) * (1 - Math.exp(-10 * delta))
-      const sinceLanding = performance.now() - slide.landedAt
-      const squash = slide.landedAt > 0 && sinceLanding < 450 ? Math.exp(-sinceLanding / 110) : 0
-      group.scale.set(1 + 0.1 * squash, 1 - 0.16 * squash, 1 + 0.1 * squash)
-      const shudder = slide.phase === 'ride' && !slide.airborne ? Math.min(1, slide.speed / 150) * 0.018 : 0
-      b.position.y = Math.sin(state.clock.elapsedTime * 47) * shudder
-      motion.sliding = true
-      motion.launch = slide.launch
-      motion.stand = slide.stand
-      motion.air = r.air
-      motion.speed = slide.phase === 'ride' ? slide.speed : 0
-      motion.grounded = true
-      return
-    }
-    if (wasSliding.current && group && visual && b) {
-      // Back at the top: stand up where the slide control put you.
-      wasSliding.current = false
-      visual.position.set(0, 0, 0)
-      visual.quaternion.setFromAxisAngle(_up, player.yaw)
-      group.position.copy(pos)
-      group.quaternion.identity()
-      group.scale.set(1, 1, 1)
-      ride.current.air = 0
-      motion.air = 0
-      b.visible = false
-      b.scale.setScalar(1)
-      motion.sliding = false
-      motion.launch = 1
-      motion.stand = 0
-    }
-
-    // --- Ready to slide: the board hovers in front of you on the SLIDE ZONE ------
-    if (b) {
-      const ready = getGame().zone.slideZone && !player.frozen
-      const r = ride.current
-      r.ready = ready ? Math.min(1, r.ready + delta * 4) : Math.max(0, r.ready - delta * 6)
-      b.visible = r.ready > 0
-      if (b.visible) {
-        const t = state.clock.elapsedTime
-        b.position.copy(READY_AHEAD)
-        b.position.y += Math.sin(t * 3) * 0.08
-        b.quaternion.setFromAxisAngle(_up, Math.sin(t * 1.3) * 0.25)
-        b.scale.setScalar(easeOutBack(r.ready))
-        b.setBoard(getGame().profile.equippedBoard)
-        b.setGlowSize(2.6 * getQuality().boardGlow)
+    // --- Ready to roll: your tire waits upright in front of you on the ROLL ZONE ---
+    if (t) {
+      const waiting = getGame().zone.rollZone && !player.frozen && !roll.active
+      ready.current = waiting ? Math.min(1, ready.current + delta * 4) : Math.max(0, ready.current - delta * 6)
+      t.visible = ready.current > 0
+      if (t.visible) {
+        const time = state.clock.elapsedTime
+        t.position.copy(READY_AHEAD)
+        t.position.y += Math.sin(time * 3) * 0.08
+        t.quaternion.setFromAxisAngle(_up, Math.sin(time * 1.3) * 0.25)
+        t.spin.rotation.x = -time * 1.5
+        t.scale.setScalar(READY_SIZE * easeOutBack(ready.current))
+        t.setTire(getGame().profile.equippedTire)
+        t.setGlowSize(2.6 * getQuality().boardGlow)
       }
     }
 
@@ -298,10 +235,10 @@ export function Player({ onAvatarReady }) {
 
     // --- Facing -----------------------------------------------------------------
     const speed = Math.hypot(velocity.current.x, velocity.current.z)
-    // Standing still on an unlocked treadmill: run on the spot, facing its console.
-    const tread = treadmillAt(pos.x, pos.z)
-    const running = tread >= 0 && player.grounded && speed < 0.5 && !player.frozen && isTreadmillUnlocked(getGame().profile, tread)
-    if (running) player.yaw = TREADMILL_YAW
+    // Standing still on an unlocked pad: bounce on your tire.
+    const pad = padAt(pos.x, pos.z)
+    const running = pad >= 0 && player.grounded && speed < 0.5 && !player.frozen && isPadUnlocked(getGame().profile, pad)
+    if (running) player.yaw = PAD_YAW
     else if (speed > 0.3) player.yaw = Math.atan2(velocity.current.x, velocity.current.z)
     if (visual) {
       _targetQuat.setFromAxisAngle(_up, player.yaw)
@@ -318,14 +255,33 @@ export function Player({ onAvatarReady }) {
     }
     shownAt.copy(pos)
 
+    // --- Bouncing on your tire on a pad ----------------------------------------
+    if (running && t && visual) {
+      const id = getGame().profile.equippedTire
+      const top = padTireTop(tireWidth(id))
+      padBounce(state.clock.elapsedTime, bounce)
+      t.visible = true
+      t.position.set(0, top / 2, 0)
+      t.quaternion.copy(LIE_FLAT)
+      t.spin.rotation.x = 0
+      // Flattening as you land on it (its axle, local X, now points up).
+      t.scale.set(PAD_TIRE_SIZE * (1 - 0.22 * bounce.squash), PAD_TIRE_SIZE * (1 + 0.06 * bounce.squash), PAD_TIRE_SIZE * (1 + 0.06 * bounce.squash))
+      t.setTire(id)
+      t.setGlowSize(1.6 * getQuality().boardGlow)
+      visual.position.y = top * (1 - 0.22 * bounce.squash) + bounce.height
+    } else if (visual) {
+      visual.position.y = 0
+    }
+
     // --- Publish motion ---------------------------------------------------------
     player.speed = speed
     player.anim = !player.grounded ? 'jump' : running ? 'run' : speed > 0.5 ? 'walk' : 'idle'
 
-    const shownSpeed = running ? WALK_SPEED : speed
+    const shownSpeed = running ? 0 : speed
     motion.speed = shownSpeed
-    motion.grounded = player.grounded
-    motion.vy = vy.current
+    // On a pad the pose follows the bounce: legs tucked in the air, landing on the tire.
+    motion.grounded = running ? bounce.height < 0.12 : player.grounded
+    motion.vy = running ? bounce.vy : vy.current
     // Steps quicken with speed: the stride phase runs faster rather than jumping.
     motion.stride += delta * (5 + 6 * Math.min(1, shownSpeed / WALK_SPEED))
   })
@@ -339,7 +295,7 @@ export function Player({ onAvatarReady }) {
           </Suspense>
         </ErrorBoundary>
       </group>
-      <primitive ref={boardRef} object={board} visible={false} />
+      <primitive ref={tireRef} object={tire} visible={false} />
     </group>
   )
 }

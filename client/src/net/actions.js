@@ -17,15 +17,15 @@ export function send(type, payload) {
 }
 
 export const actions = {
-  /** Starts a slide; only counts standing on the SLIDE ZONE (the SLIDE! button sends it). */
-  slide: () => send('slide'),
-  enterTreadmill: (treadmill) => send('enterTreadmill', { treadmill }),
-  leaveTreadmill: () => send('leaveTreadmill'),
+  /** Rolls your tire; only counts standing on the ROLL ZONE (the ROLL! button sends it). */
+  roll: () => send('roll'),
+  enterPad: (pad) => send('enterPad', { pad }),
+  leavePad: () => send('leavePad'),
   rebirth: () => send('rebirth'),
   skipRebirth: () => send('skipRebirth'),
-  buyBoard: (id) => send('buyBoard', { id }),
-  equipBoard: (id) => send('equipBoard', { id }),
-  /** Buys Slide pack `index` (0-3) from the bar under the level. */
+  buyTire: (id) => send('buyTire', { id }),
+  equipTire: (id) => send('equipTire', { id }),
+  /** Buys Health pack `index` (0-2) from the bar under the level. */
   buyPack: (index) => send('buyPack', { index }),
   hatch: (eggId, count = 1) => send('hatch', { eggId, count }),
   openEggItem: (itemId) => send('openEggItem', { itemId }),
@@ -41,4 +41,8 @@ export const actions = {
   portal: () => send('portal'),
   /** Buys a shop item with Wins; see shop.js. */
   purchase: (productId) => send('purchase', { productId }),
+  /** A rewarded ad Boxity says was watched; the server verifies the token. */
+  adReward: (placement, rewardToken) => send('adReward', { placement, rewardToken }),
+  /** Asks the server to apply any Gems purchases Boxity has confirmed. */
+  gemsCheck: () => send('gemsCheck'),
 }

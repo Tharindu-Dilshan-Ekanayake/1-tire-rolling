@@ -2,6 +2,7 @@ import {
   Box3,
   BufferAttribute,
   BufferGeometry,
+  Euler,
   Matrix4,
   MeshLambertMaterial,
   NearestFilter,
@@ -444,6 +445,96 @@ export function animateRig(rig, motion, unitsPerMetre = 1) {
     rotateBone(rig, name, 'axisY', joint.twist)
   }
   rig.root.position.y = rig.rootRestY + pose.lift * unitsPerMetre
+}
+
+/* ---------------------------------------------------------------------------
+ * Emotes
+ *
+ * A Boxity emote clip gives, per bone, keys `[time, xDeg, yDeg, zDeg]`: rotation
+ * deltas over the BIND pose, as an XYZ euler right-multiplied onto the bone's bind
+ * quaternion (`bind * euler(x, y, z)`). Between keys the value eases with a smoothstep;
+ * before the first key / after the last it holds that key. A looping clip wraps its
+ * time on `len`.
+ *
+ * Runs after animateRig: each emoted bone is blended from the procedural pose towards
+ * the emote pose by the player's weight, which ramps over EMOTE_BLEND seconds in and
+ * out. Bones the clip doesn't name keep the procedural pose; bones the rig doesn't have
+ * are ignored.
+ * ------------------------------------------------------------------------- */
+
+const EMOTE_BLEND = 0.1
+const DEG = Math.PI / 180
+const _emoteEuler = new Euler(0, 0, 0, 'XYZ')
+const _emoteQ = new Quaternion()
+const _emoteTarget = new Quaternion()
+
+/** Per-avatar playback state for `updateEmote`. Allocate once per avatar. */
+export function createEmotePlayer() {
+  return { id: null, clip: null, time: 0, weight: 0 }
+}
+
+/** Writes the clip's value for one track at `t` into _emoteEuler (radians). */
+function sampleTrack(keys, t) {
+  const last = keys.length - 1
+  let a = keys[0]
+  let b = keys[0]
+  let s = 0
+  if (t >= keys[last][0]) {
+    a = keys[last]
+    b = a
+  } else if (t > keys[0][0]) {
+    let i = 1
+    while (i < last && keys[i][0] <= t) i += 1
+    a = keys[i - 1]
+    b = keys[i]
+    const span = b[0] - a[0]
+    s = span > 0 ? (t - a[0]) / span : 1
+    s = s * s * (3 - 2 * s)
+  }
+  _emoteEuler.set((a[1] + (b[1] - a[1]) * s) * DEG, (a[2] + (b[2] - a[2]) * s) * DEG, (a[3] + (b[3] - a[3]) * s) * DEG, 'XYZ')
+}
+
+/**
+ * Advances `player` (from createEmotePlayer) towards emote `id` (null = none) and poses
+ * the rig with it. `getClip(id)` looks a clip up in the catalog (bloxity/emotes.js);
+ * an id it doesn't know is treated as no emote until it does.
+ */
+export function updateEmote(rig, player, id, delta, getClip) {
+  if (!rig?.skeleton || !player) return
+  if ((id || null) !== player.id) {
+    const clip = id ? getClip(id) : null
+    if (clip) {
+      // A new emote blends in from wherever the body is now.
+      player.id = id
+      player.clip = clip
+      player.time = 0
+      player.weight = 0
+    } else {
+      player.id = null
+    }
+  }
+
+  if (player.id) {
+    player.time += delta
+    player.weight = Math.min(1, player.weight + delta / EMOTE_BLEND)
+  } else {
+    player.weight = Math.max(0, player.weight - delta / EMOTE_BLEND)
+    if (player.weight === 0) player.clip = null
+  }
+  const clip = player.clip
+  if (!clip || player.weight <= 0) return
+
+  const t = clip.loop ? player.time % clip.len : player.time
+  const w = player.weight * player.weight * (3 - 2 * player.weight)
+  const tracks = clip.tracks
+  for (let i = 0; i < tracks.length; i += 1) {
+    const entry = rig.bones[tracks[i].bone]
+    if (!entry) continue
+    sampleTrack(tracks[i].keys, t)
+    _emoteTarget.copy(entry.origQuat).multiply(_emoteQ.setFromEuler(_emoteEuler))
+    if (w >= 1) entry.bone.quaternion.copy(_emoteTarget)
+    else entry.bone.quaternion.slerp(_emoteTarget, w)
+  }
 }
 
 const _parentInv = new Matrix4()

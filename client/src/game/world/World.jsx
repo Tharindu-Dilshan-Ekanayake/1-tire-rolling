@@ -7,16 +7,15 @@ import { glowTime } from '../glow'
 import { createToyMaterial, sharedMaterials, toyTime } from '../materials'
 import { createGroundGeometry, createGroundMap } from './ground'
 import { buildEggStands } from './eggs'
-import { buildHalloween } from './halloween'
 import { buildPortalFrame } from './portalFrame'
 import { createPaintedSigns } from './signs'
-import { buildSlideZone } from './slideZone'
-import { buildShop, buildTreadmills } from './structures'
+import { buildRollZone } from './rollZone'
+import { buildPads, buildShop } from './structures'
 import { buildWaterfall } from './waterfall'
 import { buildTerrain } from './terrain'
 
 /**
- * The static lobby: ground plane, every box (hills, trees, treadmills, stages) in one
+ * The static lobby: ground plane, every box (hills, trees, pads, stages) in one
  * InstancedMesh, and every non-box prop (pads, rings...) merged into one mesh. Three
  * draw calls for the whole environment.
  *
@@ -62,14 +61,13 @@ export function World() {
     const { decorDensity, maxTexture } = useQuality.getState().settings
     const set = new BlockSet()
     buildTerrain(set, { treeDensity: decorDensity })
-    buildTreadmills(set)
     const propBuilder = new PropBuilder()
+    buildPads(set, propBuilder)
     buildShop(set, { detail: decorDensity >= 0.75 })
-    buildSlideZone(set, propBuilder, { detail: decorDensity >= 0.75 })
+    buildRollZone(set, propBuilder, { detail: decorDensity >= 0.75 })
     buildPortalFrame(set)
-    buildHalloween(set, { detail: decorDensity >= 0.75 })
     buildWaterfall(set)
-    buildEggStands(set, propBuilder)
+    buildEggStands(set)
 
     const map = createGroundMap(maxTexture)
     const groundMaterial = createToyMaterial({ instanced: false, vertexColors: false, map, studScale: 2 })

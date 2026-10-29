@@ -64,8 +64,8 @@ function PortalSwirl({ portal, geometry }) {
 }
 
 /**
- * The world portals' swirls: World 2's ice and World 3's Halloween purple and orange.
- * Their frames are part of the static blocks (see portalFrame.js).
+ * The world portal's swirl, in World 2's ice blue. Its frame is part of the static
+ * blocks (see portalFrame.js).
  */
 export function Portal() {
   // Swirl radius, inside the frame; every portal is the same size, so one geometry.

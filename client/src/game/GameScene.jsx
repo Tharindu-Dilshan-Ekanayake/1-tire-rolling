@@ -4,6 +4,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { WebGLRenderer } from 'three'
 
 import { useBloxity } from '../bloxity/BloxityContext'
+import { useBloxityStore } from '../bloxity/store'
 import { useQuality } from '../store/quality'
 import ErrorBoundary from '../ui/ErrorBoundary'
 import BlobShadows from './BlobShadows'
@@ -15,7 +16,7 @@ import RemoteAvatars from './remote/RemoteAvatars'
 import RemotePlayers from './remote/RemotePlayers'
 import Particles from './fx/Particles'
 import Leaderboards from './world/Leaderboards'
-import BoardShop from './world/BoardShop'
+import TireShop from './world/TireShop'
 import EggDisplays from './world/EggDisplays'
 import Portal from './world/Portal'
 import TutorialArrows from './world/TutorialArrows'
@@ -34,9 +35,9 @@ const DevPerf = import.meta.env.DEV
   : null
 const showDevPerf = import.meta.env.DEV && new URLSearchParams(window.location.search).has('perf')
 
-// The canyon down the hill is its own chunk, fetched once the lobby is on screen so it
-// never delays time-to-playable.
-const Slide = lazy(() => import('./slide/Slide'))
+// The track is its own chunk, fetched once the lobby is on screen so it never delays
+// time-to-playable.
+const Roll = lazy(() => import('./roll/Roll'))
 
 /**
  * Fires `onFirstFrame` after the renderer has actually drawn once.
@@ -77,6 +78,8 @@ export function GameScene({ onReady }) {
   const settings = useQuality((s) => s.settings)
   const antialias = useQuality((s) => s.antialias)
   const degrade = useQuality((s) => s.degrade)
+  // Boxity ad break: nothing renders until it's over.
+  const adBreak = useBloxityStore((s) => s.adBreak)
 
   const [warmedUp, setWarmedUp] = useState(false)
   const [firstFrame, setFirstFrame] = useState(false)
@@ -156,6 +159,7 @@ export function GameScene({ onReady }) {
     <>
       <Canvas
         key={contextKey}
+        frameloop={adBreak ? 'never' : 'always'}
         dpr={dpr}
         gl={createRenderer}
         // PCF, not R3F's default "soft": three r18x removed PCFSoftShadowMap.
@@ -174,7 +178,7 @@ export function GameScene({ onReady }) {
         <Lighting />
         <World />
         <WorldLabels />
-        <BoardShop />
+        <TireShop />
         <EggDisplays />
         <Portal />
         <Leaderboards />
@@ -190,7 +194,7 @@ export function GameScene({ onReady }) {
         <GainFX />
         {warmedUp && firstFrame && (
           <Suspense fallback={null}>
-            <Slide />
+            <Roll />
           </Suspense>
         )}
 

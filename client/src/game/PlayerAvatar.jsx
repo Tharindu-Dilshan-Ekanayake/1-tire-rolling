@@ -6,7 +6,7 @@ import { clone as cloneSkeleton } from 'three/examples/jsm/utils/SkeletonUtils.j
 
 import {
   assetUrls,
-  BASE_BODY_URL,
+  baseBodyUrl,
   isRealId,
   PART_SLOTS,
   skinCompositeUrl,
@@ -14,6 +14,7 @@ import {
 } from '../bloxity/avatarAssets'
 import { loadOBJ, loadPartGLB, loadTexture } from '../bloxity/avatarLoader'
 import { useBloxity } from '../bloxity/BloxityContext'
+import { getEmoteClip, updateLocalEmote } from '../bloxity/emotes'
 import { shareLook } from '../net/connection'
 import {
   animateRig,
@@ -22,9 +23,11 @@ import {
   applySkin,
   attachAccessory,
   collectRig,
+  createEmotePlayer,
   disposeMergedBody,
   mergeBody,
   placeHand,
+  updateEmote,
 } from './avatarRig'
 
 /**
@@ -54,7 +57,11 @@ function fallbackMotion(delta) {
  *
  * @param {{ equipped?: object, proportions?: object, onReady?: () => void,
  *   onStep?: (text: string) => void, targetHeight?: number, motionRef?: object,
- *   handRef?: object }} props
+ *   handRef?: object, emoteSource?: () => string|null }} props
+ *   `motionRef.current` is the motion state playerPose poses the body from; its
+ *   `emote` field (a Boxity emote id, or null) plays that emote over the pose - for
+ *   another player, set it from their anim ('emote:<id>'). `emoteSource`, if given, is
+ *   asked for the emote id every frame instead (your own avatar uses it).
  *   `targetHeight` is the world-space height to fit the avatar into, in the game's
  *   own units: Bloxity authors the rig ~6.4 units tall with the feet at y=0, far bigger
  *   than the game's metric scale, so the model is measured and rescaled. `handRef` is
@@ -62,12 +69,12 @@ function fallbackMotion(delta) {
  *   anything held. `onStep` reports loading progress.
  */
 export const BloxityAvatar = forwardRef(function BloxityAvatar(
-  { equipped, proportions, onReady, onStep, targetHeight = 1.8, motionRef, handRef, ...props },
+  { equipped, proportions, onReady, onStep, targetHeight = 1.8, motionRef, handRef, emoteSource, ...props },
   ref,
 ) {
   // three's own GLTFLoader (the one the cosmetics use too), not drei's useGLTF, which
   // would bundle a second loader plus Draco/Meshopt/KTX2 decoders this GLB never needs.
-  const { scene: baseScene } = useLoader(GLTFLoader, BASE_BODY_URL)
+  const { scene: baseScene } = useLoader(GLTFLoader, baseBodyUrl())
   const [assembled, setAssembled] = useState(false)
   /** The merged body currently shown; replaced on every re-assembly. */
   const bodyRef = useRef(null)
@@ -230,13 +237,19 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
   // that touches the skeleton.
   const proportionsRef = useRef(proportions)
   proportionsRef.current = proportions
+  /** This avatar's emote playback (blend weight, clip time). */
+  const emotePlayer = useMemo(() => createEmotePlayer(), [])
 
   useFrame((_state, delta) => {
     try {
       // Order matters: proportions reset every bone to its rest pose, and the
       // animation then rotates on top of that clean base.
       applyProportions(rig, proportionsRef.current)
-      animateRig(rig, motionRef?.current ?? fallbackMotion(delta), 1 / fit.scale)
+      const motion = motionRef?.current ?? fallbackMotion(delta)
+      animateRig(rig, motion, 1 / fit.scale)
+      // A Boxity emote, blended over the pose (see avatarRig.updateEmote).
+      const emote = emoteSource ? emoteSource() : motion.emote
+      updateEmote(rig, emotePlayer, emote, Math.min(delta, 0.1), getEmoteClip)
       if (handRef?.current) placeHand(rig, handRef.current)
     } catch {
       // A malformed payload must not kill the render loop.
@@ -261,14 +274,24 @@ export const BloxityAvatar = forwardRef(function BloxityAvatar(
 
 /**
  * Your own avatar: whatever your Bloxity account (or guest) is wearing. Also tells the
- * other players, so they see you dressed the same.
+ * other players, so they see you dressed the same. Plays the emotes Boxity asks for
+ * (bloxity/emotes.js) until you move.
  */
 export const PlayerAvatar = forwardRef(function PlayerAvatar(props, ref) {
   const { avatar, proportions, game } = useBloxity()
   useEffect(() => shareLook(avatar, proportions), [avatar, proportions])
-  return <BloxityAvatar ref={ref} {...props} equipped={avatar} proportions={proportions} onStep={game.loadingStep} />
+  return (
+    <BloxityAvatar
+      ref={ref}
+      {...props}
+      equipped={avatar}
+      proportions={proportions}
+      onStep={game.loadingStep}
+      emoteSource={updateLocalEmote}
+    />
+  )
 })
 
-useLoader.preload(GLTFLoader, BASE_BODY_URL)
+useLoader.preload(GLTFLoader, baseBodyUrl())
 
 export default PlayerAvatar

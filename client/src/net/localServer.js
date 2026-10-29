@@ -3,7 +3,7 @@ import { PlayerSession } from '@shared/session'
 
 import { runtime } from '../game/runtime'
 
-const SAVE_KEY = 'sd.save.v1'
+const SAVE_KEY = 'tr.save.v1'
 const TICK_MS = 100
 const SAVE_MS = 5000
 
@@ -26,7 +26,7 @@ function loadSave() {
 export function createLocalServer({ id, name, onEvent }) {
   const profile = normalizeProfile(loadSave(), id, name)
   const startedAt = Date.now()
-  // "Keep training while you're offline": credit the treadmill you logged off on.
+  // "Keep training while you're offline": credit the pad you logged off on.
   const offline = applyOfflineProgress(profile, startedAt)
 
   const session = new PlayerSession(profile, {
@@ -64,6 +64,19 @@ export function createLocalServer({ id, name, onEvent }) {
 
   return {
     send(type, payload) {
+      // Offline there is no server to verify Boxity's word, so the two host-only grants
+      // are taken here. Both are only ever sent by bloxity/services.js, after Boxity
+      // reported a completed rewarded ad / a successful Gems purchase.
+      if (type === 'adReward') {
+        if (typeof payload?.placement === 'string') session.grantAdReward(payload.placement, Date.now())
+        save()
+        return
+      }
+      if (type === 'gemsLocal') {
+        if (typeof payload?.sku === 'string') session.grantGemProduct(payload.sku)
+        save()
+        return
+      }
       session.handle(type, payload, Date.now())
     },
     close() {

@@ -2,6 +2,8 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useRef } from 'react'
 import { Vector3 } from 'three'
 
+import { getBloxityState } from '../bloxity/store'
+import { placeLocalBubble } from './remote/nameplates'
 import { runtime } from './runtime'
 
 /** How high above the player's feet the camera aims. */
@@ -32,8 +34,10 @@ const _target = new Vector3()
  * Mouse: drag (either button) orbits, wheel zooms. Touch: one-finger drag orbits (the
  * joystick owns the left side of the screen as a separate element), pinch zooms.
  *
- * Orbit state lives in `runtime.camera`, so the slide can hand the camera
- * back exactly where it took it from.
+ * Orbit state lives in `runtime.camera`, so the roll can hand the camera
+ * back exactly where it took it from. Drag speed is scaled by the player's Boxity
+ * camera_sensitivity setting. Also places your own chat bubble each frame, once the
+ * camera has moved (it needs the final camera to project).
  */
 export function FollowCamera() {
   const camera = useThree((s) => s.camera)
@@ -78,7 +82,8 @@ export function FollowCamera() {
       const dy = e.clientY - last.y
       last.x = e.clientX
       last.y = e.clientY
-      const sensitivity = e.pointerType === 'touch' ? TOUCH_SENSITIVITY : DRAG_SENSITIVITY
+      const sensitivity =
+        (e.pointerType === 'touch' ? TOUCH_SENSITIVITY : DRAG_SENSITIVITY) * getBloxityState().cameraSensitivity
       orbit.yaw -= dx * sensitivity
       orbit.pitch = Math.min(MAX_PITCH, Math.max(MIN_PITCH, orbit.pitch + dy * sensitivity))
     }
@@ -115,10 +120,11 @@ export function FollowCamera() {
     }
   }, [gl])
 
-  useFrame((_state, rawDelta) => {
+  useFrame((state, rawDelta) => {
     if (runtime.camera.mode !== 'follow') {
       // Whoever owns the camera now is moving it; pick up smoothly when it's handed back.
       lookAt.current.copy(runtime.player.position).setY(runtime.player.position.y + LOOK_HEIGHT)
+      placeLocalBubble(camera, state.size.width, state.size.height)
       return
     }
     const delta = Math.min(rawDelta, 0.05)
@@ -150,6 +156,8 @@ export function FollowCamera() {
     camera.position.lerp(_desired, 1 - Math.exp(-POSITION_SMOOTHING * delta))
     lookAt.current.lerp(_target, 1 - Math.exp(-LOOK_SMOOTHING * delta))
     camera.lookAt(lookAt.current)
+    camera.updateMatrixWorld()
+    placeLocalBubble(camera, state.size.width, state.size.height)
   })
 
   return null

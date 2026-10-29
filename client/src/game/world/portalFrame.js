@@ -15,11 +15,6 @@ export const PORTAL_THEMES = {
     base: '#e6f6ff',
     swirl: { deep: [0.12, 0.45, 0.95], light: [0.75, 0.95, 1.0], core: [0.6, 0.6, 0.6] },
   },
-  world3: {
-    ring: ['#6a2fa0', '#ff8a1f', '#ffb23a'],
-    base: '#2e2340',
-    swirl: { deep: [0.3, 0.05, 0.5], light: [1.0, 0.5, 0.08], core: [0.55, 0.9, 0.2] },
-  },
 }
 
 /** Each portal's frame: a ring of blocks standing upright, facing the plaza. */

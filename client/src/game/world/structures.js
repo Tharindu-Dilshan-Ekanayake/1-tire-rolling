@@ -1,75 +1,54 @@
-import {
-  BELT_FAR_X,
-  BELT_HEIGHT,
-  BELT_NEAR_X,
-  BELT_WIDTH,
-  CONSOLE_X,
-  deckRect,
-  SHOP_BOARD,
-  SHOP_STAGES,
-  TREADMILL_COUNT,
-  treadmillCenterZ,
-} from '@shared/world'
+import { CylinderGeometry, TorusGeometry } from 'three'
+
+import { PAD_COUNT, PAD_HEIGHT, PAD_RADIUS, PAD_X, padCenterZ, SHOP_SIGN, SHOP_STAGES } from '@shared/world'
 
 import { STYLE } from '../materials'
 
 /**
- * Static lobby structures, added as plain boxes to the world's shared BlockSet so they
- * render in the same single draw call as the hills.
+ * Static lobby structures, added to the world's shared BlockSet and prop builder so they
+ * render in the same few draw calls as the hills.
  */
 
 /**
- * Per-treadmill look, in treadmill order (matches TREADMILLS in shared/balance.js): the
- * frame, its trim and the style of its deck, and the colour of its labels.
+ * Per-pad look, in pad order (matches PADS in shared/balance.js): the base, the top,
+ * the glowing ring, the centre emblem and the colour of its labels. `tire` is the tire
+ * that spins over it (TireShop draws those).
  */
-export const TREADMILL_THEMES = [
-  { frame: '#2f7fe6', trim: '#7fe2ff', style: STYLE.STUDS, text: '#5fd6ff' },
-  { frame: '#1d9a2b', trim: '#8dff4f', style: STYLE.STUDS, text: '#8dff4f' },
-  { frame: '#ff5a1e', trim: '#ffd23f', style: STYLE.LAVA, text: '#ff9a3c' },
-  { frame: '#2fae3a', trim: '#c6ff3a', style: STYLE.STUDS, text: '#c6ff3a' },
-  { frame: '#e5b318', trim: '#fff16c', style: STYLE.STUDS, text: '#ffe45c' },
-  { frame: '#3fb8ff', trim: '#e0faff', style: STYLE.GLOW, text: '#9fe8ff' },
-  { frame: '#1b2266', trim: '#c35cff', style: STYLE.GALAXY, text: '#d39bff' },
+export const PAD_THEMES = [
+  { base: '#1f5fc8', top: '#3f9cff', ring: '#9fe8ff', emblem: '#ffffff', text: '#5fd6ff', tire: 'bicycle' },
+  { base: '#b8222e', top: '#ff3b3b', ring: '#ffd21f', emblem: '#1d1f22', text: '#ff7a6a', tire: 'wood' },
+  { base: '#d64a9a', top: '#ff8fd0', ring: '#ffffff', emblem: '#ffd23f', text: '#ff9cd6', tire: 'pizza' },
+  { base: '#1d3f8a', top: '#2f6fe0', ring: '#7fe2ff', emblem: '#ffd21f', text: '#7fb8ff', tire: 'donut' },
+  { base: '#5a2a9a', top: '#8a4cff', ring: '#ff7ad9', emblem: '#ffffff', text: '#c69bff', tire: 'silver' },
+  { base: '#1a8ab8', top: '#7ff0ff', ring: '#ffffff', emblem: '#9b6bff', text: '#9fe8ff', tire: 'gold', style: STYLE.GLOW },
+  { base: '#1b2266', top: '#2a1450', ring: '#c35cff', emblem: '#ffd21f', text: '#d39bff', tire: 'diamond', style: STYLE.GALAXY },
 ]
 
-const BELT = '#1f2742'
-const STEEL = '#e3e9f0'
+const DISC = new CylinderGeometry(1, 1, 1, 32)
+const RING = new TorusGeometry(1, 0.08, 6, 40)
 
 /**
- * The treadmills: a deck in the machine's colour with the belt sunk into it, glowing
- * rails down both sides, and at the west end a console with handlebars and a screen
- * angled at the runner.
+ * The training pads: round two-tier platforms in the pad's colours, a glowing ring
+ * round the top and a star emblem in the middle, as in the reference. The rounded parts
+ * go into the world's props, the trim into its blocks: no draw calls of their own.
  */
-export function buildTreadmills(blocks) {
-  const beltLength = BELT_NEAR_X - BELT_FAR_X
-  const beltX = (BELT_NEAR_X + BELT_FAR_X) / 2
-  const deckTop = BELT_HEIGHT - 0.08
-
-  for (let i = 0; i < TREADMILL_COUNT; i += 1) {
-    const theme = TREADMILL_THEMES[i]
-    const cz = treadmillCenterZ(i)
-    const deck = deckRect(i)
-    const deckW = deck.maxX - deck.minX
-    const deckX = (deck.minX + deck.maxX) / 2
-
-    blocks.addOn(deckX, -0.1, cz, deckW, deckTop + 0.1, deck.maxZ - deck.minZ, theme.frame, theme.style)
-    blocks.addOn(beltX, deckTop, cz, beltLength, 0.08, BELT_WIDTH, BELT, STYLE.BELT)
-    // Rails down both sides, and the roller cap at the entrance.
-    for (const side of [-1, 1]) {
-      blocks.addOn(deckX, deckTop, cz + side * (BELT_WIDTH / 2 + 0.36), deckW - 0.2, 0.16, 0.5, theme.trim, STYLE.GLOW)
+export function buildPads(blocks, props) {
+  for (let i = 0; i < PAD_COUNT; i += 1) {
+    const theme = PAD_THEMES[i]
+    const z = padCenterZ(i)
+    const r = PAD_RADIUS
+    props.add(DISC, { position: [PAD_X, PAD_HEIGHT * 0.4, z], scale: [r + 0.45, PAD_HEIGHT * 0.8, r + 0.45], color: theme.base })
+    props.add(DISC, { position: [PAD_X, PAD_HEIGHT - 0.06, z], scale: [r, 0.14, r], color: theme.top, style: theme.style ?? STYLE.STUDS })
+    props.add(RING, { position: [PAD_X, PAD_HEIGHT + 0.02, z], rotation: [Math.PI / 2, 0, 0], scale: [r - 0.25, r - 0.25, 1], color: theme.ring, style: STYLE.GLOW })
+    // A four-point star in the middle, two crossed slabs turned 45 degrees.
+    for (const turn of [0, Math.PI / 4]) {
+      blocks.add(PAD_X, PAD_HEIGHT + 0.03, z, 1.8, 0.05, 0.4, theme.emblem, STYLE.SMOOTH, turn)
+      blocks.add(PAD_X, PAD_HEIGHT + 0.03, z, 0.4, 0.05, 1.8, theme.emblem, STYLE.SMOOTH, turn)
     }
-    blocks.addOn(BELT_NEAR_X + 0.2, deckTop, cz, 0.36, 0.12, BELT_WIDTH, STEEL, STYLE.SMOOTH)
-
-    // The console: two uprights, handlebars reaching back over the belt, a screen.
+    // Two short posts at the back, like the reference's handles.
     for (const side of [-1, 1]) {
-      const z = cz + side * (BELT_WIDTH / 2 + 0.15)
-      blocks.addOn(CONSOLE_X, 0, z, 0.4, 2.5, 0.4, theme.frame, STYLE.SMOOTH)
-      blocks.addOn(CONSOLE_X + 1.1, 1.55, z, 1.9, 0.16, 0.16, STEEL, STYLE.SMOOTH)
+      blocks.addOn(PAD_X - r * 0.75, PAD_HEIGHT, z + side * r * 0.6, 0.35, 1.3, 0.35, theme.ring, STYLE.GLOW)
     }
-    blocks.addOn(CONSOLE_X + 0.25, 1.55, cz, 0.16, 0.16, BELT_WIDTH + 0.5, STEEL, STYLE.SMOOTH)
-    blocks.addOn(CONSOLE_X, 0, cz, 1.2, 0.5, BELT_WIDTH + 0.9, theme.frame, theme.style)
-    blocks.add(CONSOLE_X - 0.05, 2.75, cz, 0.3, 1.2, BELT_WIDTH + 0.4, '#141a2e', STYLE.SMOOTH, 0, 0, 0.35)
-    blocks.add(CONSOLE_X + 0.13, 2.8, cz, 0.06, 0.8, BELT_WIDTH - 0.4, theme.trim, STYLE.GLOW, 0, 0, 0.35)
   }
 }
 
@@ -80,9 +59,9 @@ const SKY = '#7fe2ff'
 const GOLD = '#ffd21f'
 
 /**
- * The board shop: two open display stages (the stands on them are BoardShop's) and the
- * big sign behind, built like the start arch - white decks on a blue band with light
- * strips round the edges. `detail` (off on LOW) adds the sign's bulbs.
+ * The tire showroom: two open display stages (the stands on them are TireShop's) and
+ * the big sign behind, built like the start arch - white decks on a blue band with
+ * light strips round the edges. `detail` (off on LOW) adds the sign's bulbs.
  *
  * No two faces here share a plane: every layer stands a clear step proud of what it
  * sits on.
@@ -106,7 +85,7 @@ export function buildShop(blocks, { detail = true } = {}) {
   }
 
   // The sign: two striped legs, a navy panel in a blue frame, a gold cap.
-  const { x, minZ, maxZ, top } = SHOP_BOARD
+  const { x, minZ, maxZ, top } = SHOP_SIGN
   const length = maxZ - minZ
   const midZ = (minZ + maxZ) / 2
   const bottom = top - 8.2

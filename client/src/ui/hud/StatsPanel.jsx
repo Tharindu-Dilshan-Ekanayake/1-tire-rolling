@@ -24,7 +24,7 @@ function Boosts() {
   const boosts = useGame((s) => s.profile.boosts)
   const now = useNow(1000)
   const active = [
-    ['potionSlide', boosts.slide],
+    ['potionHealth', boosts.health],
     ['potionWins', boosts.wins],
   ].filter(([, end]) => end > now)
   if (active.length === 0) return null

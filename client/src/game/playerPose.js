@@ -184,10 +184,14 @@ function cheering(time, w) {
 /**
  * @param {{ time?: number, speed?: number, maxSpeed?: number, grounded?: boolean,
  *   vy?: number, stride?: number, sliding?: boolean, launch?: number, stand?: number,
- *   air?: number }} motion
+ *   air?: number, emote?: string|null }} motion
  *   `sliding` lies the body down on the board; `speed` is then the slide's speed.
  *   While sliding, `launch` (0-1) is the dive onto the board, `air` (0-1) how far into
  *   a jump's pose, and `stand` (0-1) getting up to celebrate at the end.
+ *   `emote` is a Boxity emote id to play over this pose, or null. It isn't posed here:
+ *   the Bloxity avatar blends the emote clip on top of this pose (avatarRig.updateEmote),
+ *   so the same motion object drives both. `emoteFromAnim(r.anim)` in bloxity/emotes.js
+ *   turns another player's synced anim ('emote:<id>') into this field.
  */
 export function computePose(motion) {
   const {

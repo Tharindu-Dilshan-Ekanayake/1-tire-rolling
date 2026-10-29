@@ -1,38 +1,34 @@
 import { useFrame, useThree } from '@react-three/fiber'
 import { Suspense, useEffect, useRef, useState } from 'react'
-import { Quaternion, Vector3 } from 'three'
+import { Vector3 } from 'three'
 
 import { remotePlayers } from '../../net/remotePlayers'
 import { getQuality } from '../../store/quality'
+import { emoteFromAnim } from '../../bloxity/emotes'
+import { padBounce, padTireTop } from '../padBounce'
 import { BloxityAvatar } from '../PlayerAvatar'
-import { FACE_DOWNHILL, riderBody, rideTurn, standSide } from '../slide/path'
+import { tireWidth } from '../tire'
 
 /** How often the set of fully drawn players is reconsidered. */
 const PICK_MS = 500
 /** Top walking speed: full stride amplitude, as for your own character. */
 const MAX_SPEED = 10.875
-/** Facing a treadmill's console, as your own character does. */
-const TREADMILL_YAW = -Math.PI / 2
+/** Training on a pad, facing out over the plaza, as your own character does. */
+const PAD_YAW = Math.PI / 2
+const bounce = { height: 0, vy: 0, squash: 0 }
 
 const _up = new Vector3(0, 1, 0)
-const _turn = new Quaternion()
-const _bodyQuat = new Quaternion()
-const _bodyPos = new Vector3()
-
-/** Where a remote player is drawn: down the hill while they slide, else where they stand. */
-const shownAt = (r) => (r.riding && r.ride?.state ? r.ride.state.position : r.position)
 
 /**
  * One other player as their real Bloxity avatar, dressed as they are and posed by the
  * same playerPose as yours, from what the network says they're doing: walking pace,
- * running on a treadmill, jumping - and sliding: diving onto their board, lying on it
- * down the hill (RemotePlayers draws the board), flying off ramps and cheering at the
- * end, placed exactly as your own rider is (path.riderBody).
+ * bouncing on their tire on a pad (RemotePlayers draws the tire), jumping. While they roll they stay at the Roll Zone; their tire is
+ * the ghost tire rolling down the track (roll/Roll.jsx).
  */
 function RemoteAvatar({ sessionId, look }) {
   const groupRef = useRef(null)
   const lastY = useRef(null)
-  const motionRef = useRef({ time: 0, speed: 0, grounded: true, maxSpeed: MAX_SPEED, vy: 0, stride: 0, sliding: false, launch: 1, stand: 0, air: 0 })
+  const motionRef = useRef({ time: 0, speed: 0, grounded: true, maxSpeed: MAX_SPEED, vy: 0, stride: 0 })
 
   useFrame((_state, rawDelta) => {
     const group = groupRef.current
@@ -42,40 +38,25 @@ function RemoteAvatar({ sessionId, look }) {
     const m = motionRef.current
     m.time += delta
 
-    // Sliding: on their board down the hill.
-    const st = r.riding ? r.ride?.state : null
-    if (st) {
-      group.visible = true
-      rideTurn(st, _turn)
-      riderBody(st, _turn, FACE_DOWNHILL, standSide(r.ride.distance), _bodyPos, _bodyQuat)
-      group.position.copy(_bodyPos).applyQuaternion(_turn).add(st.position)
-      group.quaternion.multiplyQuaternions(_turn, _bodyQuat)
-      m.sliding = true
-      m.launch = st.launch
-      m.stand = st.stand
-      m.air += ((st.airborne ? 1 : 0) - m.air) * (1 - Math.exp(-10 * delta))
-      m.speed = st.phase === 'ride' ? st.speed : 0
-      m.grounded = true
-      lastY.current = null
-      return
-    }
-    m.sliding = false
-    m.launch = 1
-    m.stand = 0
-    m.air = 0
-
     const running = r.anim === 'run'
-    // Mid-slide but we never saw it start (we joined late): not drawn at the top.
-    group.visible = r.anim !== 'slide'
+    group.visible = true
     group.position.copy(r.position)
-    group.quaternion.setFromAxisAngle(_up, running ? TREADMILL_YAW : r.yaw)
+    group.quaternion.setFromAxisAngle(_up, running ? PAD_YAW : r.yaw)
+    if (running) {
+      padBounce(_state.clock.elapsedTime, bounce)
+      group.position.y += padTireTop(tireWidth(r.tireId)) * (1 - 0.22 * bounce.squash) + bounce.height
+    }
 
-    const speed = running ? MAX_SPEED : r.speed
+    const speed = running ? 0 : r.speed
     m.speed = speed
-    m.grounded = r.anim !== 'jump'
+    m.grounded = running ? bounce.height < 0.12 : r.anim !== 'jump'
+    // A Boxity emote they're playing (stood still while it lasts).
+    m.emote = emoteFromAnim(r.anim)
+    if (m.emote) m.speed = 0
     // Vertical speed from the interpolated height, smoothed: rising vs falling.
     const y = r.position.y
-    if (lastY.current !== null) m.vy += ((y - lastY.current) / Math.max(delta, 1e-3) - m.vy) * 0.3
+    if (running) m.vy = bounce.vy
+    else if (lastY.current !== null) m.vy += ((y - lastY.current) / Math.max(delta, 1e-3) - m.vy) * 0.3
     lastY.current = y
     m.stride += delta * (5 + 6 * Math.min(1, speed / MAX_SPEED))
   })
@@ -89,7 +70,7 @@ function RemoteAvatar({ sessionId, look }) {
 
 /**
  * The other players nearest the camera, as their real avatars - standing, walking or
- * sliding: as many as the quality preset allows (`remoteAvatars`), within
+ * training: as many as the quality preset allows (`remoteAvatars`), within
  * `remoteAvatarDistance`. Anyone further is the cheap blocky figure RemotePlayers draws
  * (`r.fullAvatar` tells it who's covered); far enough away that it's only a few pixels.
  * Chosen twice a second, never per frame, so React only re-renders when the set of
@@ -105,8 +86,7 @@ export function RemoteAvatars() {
       const near = []
       for (const r of remotePlayers.values()) {
         r.fullAvatar = false
-        // Riders count by where they are on the hill, not where they pressed SLIDE.
-        const d = camera.position.distanceTo(shownAt(r))
+        const d = camera.position.distanceTo(r.position)
         if (d < settings.remoteAvatarDistance) near.push([d, r])
       }
       near.sort((a, b) => a[0] - b[0])

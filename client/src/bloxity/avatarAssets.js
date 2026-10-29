@@ -11,13 +11,17 @@
  *     pantsId, shirtId, faceId }
  */
 
-export const AVATAR_CDN = 'https://static.bloxity.io/avatars'
+import { apiUrl, staticUrl } from './env'
 
-/** Same value BloxityProvider passes to `init()`; the composited skin is served here. */
-const API_URL = import.meta.env.VITE_BLOXITY_API_URL || 'https://api.bloxity.io'
+/**
+ * Where avatar assets live. Built on every call from the Boxity environment (see
+ * env.js), never frozen into a constant at import: prod, stage and a local stack each
+ * serve their own.
+ */
+export const avatarCdn = () => `${staticUrl()}/avatars`
 
 /** The base humanoid body + skeleton. All other assets modify this. */
-export const BASE_BODY_URL = `${AVATAR_CDN}/player.glb`
+export const baseBodyUrl = () => `${avatarCdn()}/player.glb`
 
 /** Bone that hats attach to, from player.glb's skeleton. */
 export const HAT_BONE = 'Neck1'
@@ -60,13 +64,13 @@ export function isRealId(id) {
 export const assetUrls = {
   part: (slot, id) => {
     const { dir, suffix } = PART_SLOTS[slot]
-    return `${AVATAR_CDN}/parts/${dir}/${id}${suffix}.glb`
+    return `${avatarCdn()}/parts/${dir}/${id}${suffix}.glb`
   },
-  skinTexture: (id) => `${AVATAR_CDN}/skins/${id}.png`,
-  hatMesh: (id) => `${AVATAR_CDN}/items/hats/${id}.obj`,
-  hatTexture: (id) => `${AVATAR_CDN}/textures/hats/${id}.png`,
-  backMesh: (id) => `${AVATAR_CDN}/items/back/${id}.obj`,
-  backTexture: (id) => `${AVATAR_CDN}/textures/back/${id}.png`,
+  skinTexture: (id) => `${avatarCdn()}/skins/${id}.png`,
+  hatMesh: (id) => `${avatarCdn()}/items/hats/${id}.obj`,
+  hatTexture: (id) => `${avatarCdn()}/textures/hats/${id}.png`,
+  backMesh: (id) => `${avatarCdn()}/items/back/${id}.obj`,
+  backTexture: (id) => `${avatarCdn()}/textures/back/${id}.png`,
 }
 
 /** Skin ids fall back to "0" rather than being skipped. */
@@ -98,5 +102,5 @@ export function skinCompositeUrl(equipped) {
 
   let key = `s${skinIdOrDefault(equipped.skinId)}`
   for (const [field, prefix] of layers) key += `_${prefix}${equipped[field]}`
-  return `${API_URL}/v1/avatar/skin-texture/${key}.png`
+  return `${apiUrl()}/v1/avatar/skin-texture/${key}.png`
 }

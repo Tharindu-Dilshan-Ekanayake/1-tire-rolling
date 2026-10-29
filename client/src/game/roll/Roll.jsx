@@ -17,7 +17,7 @@ import {
   Vector3,
 } from 'three'
 
-import { TROPHY_FIRST, TROPHY_SPACING, ZONES } from '@shared/balance'
+import { ROLL_RECOVERY, TROPHY_FIRST, TROPHY_SPACING, ZONES } from '@shared/balance'
 import { formatNumber } from '@shared/format'
 import { trophyValue, winsMultiplier, zoneIndexAt } from '@shared/logic'
 import { mulberry32 } from '@shared/rng'
@@ -28,22 +28,24 @@ import { getGame, useGame } from '../../store/game'
 import { getQuality, useQuality } from '../../store/quality'
 import { iconUrl } from '../../ui/icons'
 import { BlockSet, createToyInstances, disposeBlocks, PropBuilder } from '../blocks'
-import { boardGlow } from '../board'
 import { spawnScattered } from '../fx/popups'
+import { createGlowInstances, disposeGlow } from '../glow'
 import { LabelBatch } from '../labels/LabelBatch'
 import { sharedMaterials, STYLE } from '../materials'
 import { runtime } from '../runtime'
 import { FOG, SKY } from '../sceneStyle'
 import { skyUniforms } from '../skyState'
+import { createTireMesh, disposeTireMesh, tireGlow, tireMatrix } from '../tire'
 import { writeDistance, writeZone } from './hudLink'
-import { slopeBoxMatrix, surfaceY, trackPoint, weaveX, zAt } from './path'
-import SlideFX from './SlideFX'
+import { createRideState, meterAtZ, rideState, rideTurn, slopeBoxMatrix, surfaceY, TIRE_SIZE, trackPoint, weaveX, zAt } from './path'
+import RollFX from './RollFX'
+import { advanceRoll, roll } from './rollControl'
 import SpeedBlur from './SpeedBlur'
-import { advanceSlide, slide } from './slideControl'
-import { buildChunk, CHUNK, GATES, RIM_X, WALL_H, WALL_RUN, ZONE_THEMES } from './track'
+import { buildChunk, CHUNK, GATE_BEAM_H, GATE_BEAM_Y, RIM_X, WALL_H, WALL_RUN, WALLS, ZONE_THEMES } from './track'
+import Walls from './Walls'
 
 /**
- * Above this speed (m/s) the slide goes to "warp": no new scenery is built, a plain
+ * Above this speed (m/s) the roll goes to "warp": no new scenery is built, a plain
  * zone-coloured canyon rushes past under the speed lines, and only the chunks around
  * where you'll stop are prepared. Streaming real chunks at thousands of m/s would cost
  * more CPU than a phone has, for scenery nobody could see.
@@ -60,7 +62,7 @@ const LEAN = Math.atan2(WALL_RUN, WALL_H)
 
 /** Warp-canyon colours and styles per zone, parsed once. */
 const WARP_THEMES = ZONES.map((z) => {
-  const t = ZONE_THEMES[z.id]
+  const t = ZONE_THEMES[z.theme]
   return {
     floor: new Color(t.floor),
     wall: new Color(t.wall),
@@ -91,8 +93,16 @@ const PINNED_CHUNKS = 3
 const CACHE_LIMIT = 14
 const MAX_TROPHIES = 16
 const STREAKS = 36
-/** Trophies float this high over the riding line. */
-const TROPHY_HEIGHT = 1.5
+/** Trophies float this high over the rolling line. */
+const TROPHY_HEIGHT = 3.4
+/** Other players' tires drawn at once, besides yours. */
+const MAX_GHOSTS = 7
+/** Each other player's tire keeps to its own line down the canyon, so tires don't overlap. */
+const ghostLane = (sid) => {
+  let h = 2166136261
+  for (let i = 0; i < sid.length; i += 1) h = Math.imul(h ^ sid.charCodeAt(i), 16777619)
+  return (((h >>> 0) % 5) - 2) * 3
+}
 /**
  * Frame-loop priority: before every other system, so the chase camera has moved before
  * anything projects into it (name tags, popups). Negative, so R3F still renders itself.
@@ -110,7 +120,9 @@ const _cam = new Vector3()
 const camBase = new Vector3()
 const _up = new Vector3(0, 1, 0)
 /** Stable vector for runtime.flightFocus (the scratch ones are reused mid-frame). */
-const riderFocus = new Vector3()
+const tireFocus = new Vector3()
+const _turn = new Quaternion()
+const _glowM = new Matrix4()
 const _skyTop = new Color()
 const _skyHorizon = new Color()
 
@@ -138,8 +150,8 @@ const showIfWanted = (mesh, i) => {
 
 /**
  * Speed-line streaks, made once: alternately down the left and right of the view (well
- * clear of the rider and the distance counter), each a little thicker or longer than
- * the next, and every third tinted with your board's glow.
+ * clear of the tire and the distance counter), each a little thicker or longer than
+ * the next, and every third tinted with your tire's glow.
  */
 const streakState = (() => {
   const r = mulberry32(5)
@@ -204,11 +216,13 @@ const streakFragmentShader = /* glsl */ `
   }
 `
 
-const ZONE_SKIES = ZONES.map((z) => ZONE_THEMES[z.id].sky.map((c) => new Color(c)))
+const ZONE_SKIES = ZONES.map((z) => ZONE_THEMES[z.theme].sky.map((c) => new Color(c)))
 const ZONE_NAME_GRADIENTS = ZONES.map((z) => {
-  const [a, b, c] = ZONE_THEMES[z.id].name
+  const [a, b, c] = ZONE_THEMES[z.theme].name
   return `linear-gradient(180deg, ${a} 0%, ${b} 45%, ${c} 100%)`
 })
+/** Stage themes under a night sky full of stars. */
+const STARRY = new Set(['moon', 'space', 'cosmic'])
 const DEFAULT_TOP = new Color(SKY.top)
 const DEFAULT_HORIZON = new Color(SKY.horizon)
 
@@ -230,7 +244,57 @@ function createTrophyGeometry() {
 
 let warpZone = -1
 
-/** Lays the warp canyon along the slope around `meter`, restyled when the zone changes. */
+/** Ride states for other players' tires: a fixed pool, handed out by session id. */
+const ghostPool = Array.from({ length: MAX_GHOSTS }, () => ({ ...createRideState(), sid: null, ride: null }))
+
+/** The pooled state replaying `ride` for player `sid`, or null if the pool is full. */
+function ghostState(sid, ride) {
+  let free = null
+  for (const st of ghostPool) {
+    if (st.sid === sid) {
+      if (st.ride !== ride) {
+        // A new roll from the same player.
+        st.ride = ride
+        ride.fromMeter = meterAtZ(ride.z)
+        ride.startX = ride.x
+      }
+      return st
+    }
+    if (!free && st.sid === null) free = st
+  }
+  if (!free) return null
+  free.sid = sid
+  free.ride = ride
+  ride.fromMeter = meterAtZ(ride.z)
+  ride.startX = ride.x
+  return free
+}
+
+/** Frees the pooled state of rolls that are over or whose player left. */
+function releaseGhosts() {
+  for (const st of ghostPool) {
+    if (st.sid !== null && runtime.ghostRolls.get(st.sid) !== st.ride) {
+      st.sid = null
+      st.ride = null
+    }
+  }
+}
+
+/**
+ * Writes tire instance `n` (and its halo) for ride state `st`: tire `id`, popped out to
+ * `pop` of its size. Returns the next free instance.
+ */
+function placeTire(tires, halos, n, st, id, pop, glowSize) {
+  rideTurn(st, _turn)
+  tireMatrix(st.position, _turn, TIRE_SIZE * pop, id, _m)
+  tires.setMatrixAt(n, _m)
+  tires.setStyle(n, id)
+  halos.setMatrixAt(n, _glowM.compose(st.position, _q.identity(), _s.setScalar(glowSize * pop)))
+  halos.setColorAt(n, tireGlow(id))
+  return n + 1
+}
+
+/** Lays the warp canyon along the track around `meter`, restyled when the zone changes. */
 function updateWarpCanyon(canyon, meter) {
   const zi = zoneIndexAt(meter)
   const theme = WARP_THEMES[zi]
@@ -253,11 +317,11 @@ function updateWarpCanyon(canyon, meter) {
 }
 
 /**
- * Lazily loaded: the canyon down the hill, the trophies on it and the chase camera
- * while you slide. While nobody is sliding it still streams the first stretch, which is
- * the canyon you see dropping away from the lobby.
+ * Lazily loaded: the track, its walls and trophies, your rolling tire (and other
+ * players' ghost tires) and the chase camera while it rolls. While nobody is rolling it
+ * still streams the first stretch, which is the canyon you see from the lobby.
  */
-export default function Slide() {
+export default function Roll() {
   const camera = useThree((s) => s.camera)
   const scene = useThree((s) => s.scene)
   const gl = useThree((s) => s.gl)
@@ -265,26 +329,32 @@ export default function Slide() {
   const groupRef = useRef(null)
   const warpRef = useRef(null)
   const trophyRef = useRef(null)
+  const tiresRef = useRef(null)
+  const tireGlowRef = useRef(null)
   const streakRef = useRef(null)
-  /** The slide (its startedAt) the speed lines were last tinted for. */
+  /** The roll (its startedAt) the speed lines were last tinted for. */
   const streakTintedFor = useRef(-1)
   const starsRef = useRef(null)
   const gatesRef = useRef(null)
   const startedFor = useRef(0)
-  /** Trophies passed so far this slide: the next one's metre, and Wins not yet shown. */
+  /** Trophies passed so far this roll: the next one's metre, and Wins not yet shown. */
   const trophyTally = useRef({ next: TROPHY_FIRST, pending: 0, shownAt: 0 })
   const zoneShown = useRef(-1)
   const wasActive = useRef(false)
-  /** The camera's field of view outside slides, restored after each. */
+  /** The camera's field of view outside rolls, restored after each. */
   const baseFov = useRef(60)
   const speedLines = useQuality((s) => s.settings.speedLines)
   const particles = useQuality((s) => s.settings.particles)
   const motionBlur = useQuality((s) => s.settings.motionBlur)
   const antialias = useQuality((s) => s.antialias)
-  const sliding = useGame((s) => Boolean(s.slide))
+  const rolling = useGame((s) => Boolean(s.roll))
 
   const assets = useMemo(() => {
     const trophies = createToyInstances(createTrophyGeometry(), sharedMaterials().toy, MAX_TROPHIES)
+    // Yours (instance 0) and everyone else's: one tire mesh, one halo mesh.
+    const tires = createTireMesh(1 + MAX_GHOSTS)
+    const tireGlows = createGlowInstances(1 + MAX_GHOSTS, 0.65)
+    tireGlows.count = 0
 
     const streakMaterial = new ShaderMaterial({
       uniforms: { uOpacity: { value: 0 } },
@@ -320,11 +390,11 @@ export default function Slide() {
     warpCanyon.visible = false
     warpCanyon.frustumCulled = false
 
-    return { trophies, streakMesh, streakMaterial, stars, warpCanyon }
+    return { trophies, tires, tireGlows, streakMesh, streakMaterial, stars, warpCanyon }
   }, [])
 
   // This module loads after the lobby is on screen; compile its shaders in the
-  // background before showing it, so the first slide doesn't stall on them.
+  // background before showing it, so the first roll doesn't stall on them.
   useEffect(() => {
     const root = rootRef.current
     // Skipped in dev, where StrictMode's remount disposes materials mid-compile (see
@@ -342,15 +412,21 @@ export default function Slide() {
     }
   }, [gl, camera, scene])
 
-  // Zone names over the gates: their own small label batch.
+  // Each gate's sign: the stage's name and the Health it takes to smash its wall.
   useEffect(() => {
     const batch = new LabelBatch({ pageSize: Math.min(512, getQuality().maxTexture) })
-    for (const g of GATES) {
-      const z = zAt(g.meter)
+    for (const w of WALLS) {
+      const z = zAt(w.meter)
       batch.add(
-        `gate-${g.zone.id}`,
-        [0, surfaceY(z, 0) + 18.5, z],
-        { lines: [{ text: g.zone.name, size: 64, gradient: ZONE_THEMES[g.zone.id].name }], pxPerUnit: 26 },
+        `wall-${w.zone.id}`,
+        [0, surfaceY(z, 0) + GATE_BEAM_Y + GATE_BEAM_H / 2, z + 1.3],
+        {
+          lines: [
+            { text: w.zone.name, size: 58, gradient: ZONE_THEMES[w.zone.theme].name },
+            { text: `${formatNumber(w.zone.wall)} Health`, size: 40, icon: 'heart', fill: '#ffffff' },
+          ],
+          pxPerUnit: 30,
+        },
         { fade: 400 },
       )
     }
@@ -412,6 +488,8 @@ export default function Slide() {
       chunkCache.clear()
       assets.trophies.geometry.dispose()
       assets.trophies.dispose()
+      disposeTireMesh(assets.tires)
+      disposeGlow(assets.tireGlows)
       assets.streakMesh.geometry.dispose()
       assets.streakMaterial.dispose()
       assets.streakMesh.dispose()
@@ -430,13 +508,13 @@ export default function Slide() {
     const settings = getQuality()
     const now = performance.now()
 
-    // --- The ride -----------------------------------------------------------------
+    // --- The roll -----------------------------------------------------------------
     let focus = 0
     let speed = 0
-    if (slide.active) {
-      advanceSlide(state.clock.elapsedTime)
-      if (startedFor.current !== slide.startedAt) {
-        startedFor.current = slide.startedAt
+    if (roll.active) {
+      advanceRoll(state.clock.elapsedTime)
+      if (startedFor.current !== roll.startedAt) {
+        startedFor.current = roll.startedAt
         camBase.copy(camera.position)
         baseFov.current = camera.fov
         const tally = trophyTally.current
@@ -445,63 +523,64 @@ export default function Slide() {
         tally.shownAt = 0
         zoneShown.current = -1
       }
-      focus = Math.max(0, slide.meter)
-      speed = slide.speed
-      const p = slide.position
-      runtime.flightFocus = riderFocus.copy(p)
-      writeDistance(Math.max(0, slide.meter))
-      const zi = zoneIndexAt(Math.max(0, slide.meter))
+      focus = Math.max(0, roll.meter)
+      speed = roll.speed
+      const p = roll.position
+      runtime.flightFocus = tireFocus.copy(p)
+      writeDistance(Math.max(0, roll.meter))
+      const zi = zoneIndexAt(Math.max(0, roll.meter))
       if (zi !== zoneShown.current) {
         zoneShown.current = zi
-        writeZone(ZONES[zi].name, ZONE_NAME_GRADIENTS[zi])
+        writeZone(zi, ZONES[zi].name, ZONE_NAME_GRADIENTS[zi])
       }
 
-      // The sound of the ride, swelling with your speed, gone once you stop.
-      if (!slide.stopped && speed > 4) {
+      // The sound of the roll, swelling with its speed, gone once it stops.
+      if (!roll.stopped && !roll.crashed && speed > 4) {
         sfx.windStart()
-        sfx.windSet(speed / 120, slide.airborne, slide.skid)
-      } else if (slide.stopped) {
+        sfx.windSet(speed / 120, roll.airborne, 0)
+      } else if (roll.stopped || roll.crashed) {
         sfx.windStop()
       }
 
-      if (runtime.camera.mode === 'slide') {
-        const elapsed = (now - slide.startedAt) / 1000
-        if (slide.phase === 'stopped') {
-          // Stopped: swing round to the side and in, onto you cheering.
-          const k = smoothstep(0, 1.4, elapsed - slide.duration)
-          const angle = (Math.floor(slide.distance) % 2 === 0 ? 1 : -1) * 0.75 * k
-          const dist = 8.5 - 3.2 * k
-          const height = 3.4 - 1.5 * k
-          _cam.set(Math.sin(angle) * dist, height + Math.cos(angle) * dist * 0.2, Math.cos(angle) * dist).add(p)
+      if (runtime.camera.mode === 'roll') {
+        const elapsed = (now - roll.startedAt) / 1000
+        if (roll.phase === 'stopped' || roll.crashed) {
+          // Stopped: swing round to the side and in, onto the tire lying there.
+          const k = smoothstep(0, 1.4, elapsed - roll.duration + (roll.crashed ? 0.5 : 0))
+          const angle = (Math.floor(roll.distance) % 2 === 0 ? 1 : -1) * 0.7 * k
+          const dist = 12 - 3.5 * k
+          const height = 5.4 - 1.6 * k
+          _cam.set(Math.sin(angle) * dist, height + Math.cos(angle) * dist * 0.15, Math.cos(angle) * dist).add(p)
           camBase.lerp(_cam, 1 - Math.exp(-4 * delta))
-          _look.copy(p).y += 1.1 - 0.4 * (1 - k)
+          _look.copy(p).y += 0.4
         } else {
-          // Chase camera: behind and above you, looking down the slope. Locked to you
-          // along the slope (at warp speed any lag leaves it hundreds of metres behind);
+          // Chase camera: behind and above the tire, looking down the track. Locked to it
+          // along the track (at warp speed any lag leaves it hundreds of metres behind);
           // eased sideways so the weaving stays smooth, and eased in from the lobby
-          // camera - close and low for the dive, pulling back once you're off.
+          // camera - close for the push, pulling back once it's off.
           const off = smoothstep(0.5, 1.4, elapsed)
-          const behind = 7 + 1.5 * off + Math.min(speed, 300) * 0.006
-          trackPoint(slide.meter - behind, 0, 3.1 + 0.3 * off + slide.air * 0.85, _cam)
+          const behind = 8.5 + 2.5 * off + Math.min(speed, 300) * 0.006
+          trackPoint(roll.meter - behind, 0, 4.6 + 0.8 * off + roll.air * 0.85, _cam)
           const easingIn = elapsed < 1
           const kIn = easingIn ? 1 - Math.exp(-8 * delta) : 1
           const kx = easingIn ? kIn : 1 - Math.exp(-5 * delta)
           camBase.set(
-            camBase.x + (p.x * 0.65 - camBase.x) * kx,
+            camBase.x + (p.x * 0.7 - camBase.x) * kx,
             camBase.y + (_cam.y - camBase.y) * kIn,
             camBase.z + (_cam.z - camBase.z) * kIn,
           )
-          trackPoint(slide.meter + 14, p.x * 0.85, 0.4 + slide.air * 0.9, _look)
+          trackPoint(roll.meter + 16, p.x * 0.85, 2 + roll.air * 0.9, _look)
         }
-        // Shake: a rumble that grows with speed, and a jolt when the board lands.
-        const sinceLand = now - slide.landedAt
+        // Shake: a rumble that grows with speed, and a jolt on landings and wall hits.
+        const sinceLand = now - Math.max(roll.landedAt, roll.hitAt)
         const amp =
-          (slide.phase === 'ride' ? Math.min(1, speed / 220) * SPEED_SHAKE : 0) +
+          (roll.phase === 'ride' && !roll.crashed ? Math.min(1, speed / 220) * SPEED_SHAKE : 0) +
           (sinceLand < LAND_SHAKE_MS * 3 ? LAND_SHAKE * Math.exp(-sinceLand / LAND_SHAKE_MS) : 0)
         camera.position.set(camBase.x + (Math.random() - 0.5) * amp, camBase.y + (Math.random() - 0.5) * amp, camBase.z)
         camera.lookAt(_look)
         // The view widens with speed: the rush of going fast.
-        const fov = baseFov.current + (slide.phase === 'ride' ? Math.min(FOV_KICK, speed * 0.08) : slide.phase === 'stopped' ? -6 : 0)
+        const fov =
+          baseFov.current + (roll.phase === 'ride' && !roll.crashed ? Math.min(FOV_KICK, speed * 0.08) : roll.phase === 'stopped' ? -6 : 0)
         // (The frame's own camera handle: the same camera, but writable by lint's rules.)
         const lens = state.camera
         if (Math.abs(fov - lens.fov) > 0.05) {
@@ -510,7 +589,7 @@ export default function Slide() {
         }
       }
     }
-    if (wasActive.current && !slide.active) {
+    if (wasActive.current && !roll.active) {
       state.camera.fov = baseFov.current
       state.camera.updateProjectionMatrix()
       sfx.windStop()
@@ -518,7 +597,7 @@ export default function Slide() {
       skyUniforms.horizonColor.value.copy(DEFAULT_HORIZON)
       if (scene.fog) scene.fog.color.set(FOG.color)
     }
-    wasActive.current = slide.active
+    wasActive.current = roll.active
 
     // --- Canyon chunks ------------------------------------------------------------
     // Only decide what should exist; the builder above does the allocating, outside
@@ -532,13 +611,13 @@ export default function Slide() {
     want.shadows = settings.shadows === 'realtime'
     chunkCache.forEach(showIfWanted)
 
-    if (!slide.active) want.warp = false
+    if (!roll.active) want.warp = false
     else if (!want.warp && speed > WARP_ON) want.warp = true
     else if (want.warp && speed < WARP_OFF) want.warp = false
-    if (slide.active) {
-      // Where you'll stop, built ahead of time while warping towards it.
-      want.prefetchFirst = Math.max(0, Math.floor((slide.distance - 150) / CHUNK))
-      want.prefetchLast = Math.floor((slide.distance + Math.min(ahead, 240)) / CHUNK)
+    if (roll.active) {
+      // Where it'll stop, built ahead of time while warping towards it.
+      want.prefetchFirst = Math.max(0, Math.floor((roll.distance - 150) / CHUNK))
+      want.prefetchLast = Math.floor((roll.distance + Math.min(ahead, 240)) / CHUNK)
     } else {
       want.prefetchLast = -1
     }
@@ -548,13 +627,45 @@ export default function Slide() {
       if (want.warp) updateWarpCanyon(canyon, focus)
     }
 
+    // --- Your tire and everyone else's -------------------------------------------
+    const tires = tiresRef.current
+    const halos = tireGlowRef.current
+    if (tires && halos) {
+      let n = 0
+      const glowSize = 3.2 * settings.boardGlow
+      // It pops out in front of you, then sets off; once it shatters on a gate it's
+      // only pieces (Walls.jsx).
+      if (roll.active && !roll.crashed) {
+        const pop = roll.phase === 'launch' ? Math.min(1, roll.launch / 0.35) : 1
+        n = placeTire(tires, halos, n, roll, roll.tireId, pop, glowSize)
+      }
+      for (const [sid, ride] of runtime.ghostRolls) {
+        const elapsed = (now - ride.startedAt) / 1000
+        if (elapsed > ride.duration + ROLL_RECOVERY + 2) {
+          runtime.ghostRolls.delete(sid)
+          continue
+        }
+        const st = ghostState(sid, ride)
+        if (!st) continue
+        rideState(elapsed, ride, ghostLane(sid), st)
+        if (st.crashed || camera.position.distanceTo(st.position) > settings.viewDistance) continue
+        n = placeTire(tires, halos, n, st, ride.tireId, st.phase === 'launch' ? Math.min(1, st.launch / 0.35) : 1, glowSize)
+      }
+      releaseGhosts()
+      tires.count = n
+      halos.count = glowSize > 0 ? n : 0
+      tires.instanceMatrix.needsUpdate = true
+      halos.instanceMatrix.needsUpdate = true
+      if (halos.instanceColor) halos.instanceColor.needsUpdate = true
+    }
+
     // --- Trophies -----------------------------------------------------------------
-    if (slide.active) {
-      // Tally the ones just slid through. The Wins were granted with the slide; this is
+    if (roll.active) {
+      // Tally the ones just rolled through. The Wins were granted with the roll; this is
       // the visual receipt. At speed you pass dozens a second, so they're summed into
       // one popup at most every TROPHY_POPUP_MS.
       const tally = trophyTally.current
-      while (tally.next <= Math.min(slide.meter, slide.distance)) {
+      while (tally.next <= Math.min(roll.meter, roll.distance)) {
         tally.pending += trophyValue(tally.next)
         tally.next += TROPHY_SPACING
       }
@@ -572,7 +683,7 @@ export default function Slide() {
       let count = 0
       const k0 = Math.max(0, Math.ceil((focus - 10 - TROPHY_FIRST) / TROPHY_SPACING))
       for (let m = TROPHY_FIRST + k0 * TROPHY_SPACING; m < focus + ahead * 0.8 && count < MAX_TROPHIES; m += TROPHY_SPACING) {
-        if (slide.active && m <= slide.meter) continue
+        if (roll.active && m <= roll.meter) continue
         trackPoint(m, weaveX(m), TROPHY_HEIGHT + Math.sin(spin + m) * 0.25, _p)
         _q.setFromAxisAngle(_up, spin + m)
         _s.setScalar(1.5)
@@ -584,8 +695,8 @@ export default function Slide() {
     }
 
     // --- Sky tint by zone ---------------------------------------------------------
-    if (slide.active) {
-      const meter = Math.max(0, slide.meter)
+    if (roll.active) {
+      const meter = Math.max(0, roll.meter)
       const zi = zoneIndexAt(meter)
       const blend = smoothstep(ZONES[zi].start, ZONES[zi].start + 80, meter)
       const prev = ZONE_SKIES[Math.max(0, zi - 1)]
@@ -598,7 +709,7 @@ export default function Slide() {
 
       const stars = starsRef.current
       if (stars && particles) {
-        const spaceBlend = zi === ZONES.length - 1 ? blend : 0
+        const spaceBlend = STARRY.has(ZONES[zi].theme) ? (STARRY.has(ZONES[Math.max(0, zi - 1)].theme) ? 1 : blend) : 0
         stars.visible = spaceBlend > 0.01
         stars.material.opacity = spaceBlend
         stars.position.copy(camera.position)
@@ -610,14 +721,14 @@ export default function Slide() {
     // --- Speed lines --------------------------------------------------------------
     const lines = streakRef.current
     if (lines) {
-      const active = slide.active && !slide.stopped && speedLines && speed > STREAKS_FROM
+      const active = roll.active && !roll.stopped && !roll.crashed && speedLines && speed > STREAKS_FROM
       if (!active) {
         lines.count = 0
       } else {
-        if (streakTintedFor.current !== slide.startedAt) {
-          // Once a slide: the tinted ones take this board's glow, softened towards white.
-          streakTintedFor.current = slide.startedAt
-          _tint.copy(boardGlow(getGame().profile.equippedBoard)).lerp(WHITE, 0.35)
+        if (streakTintedFor.current !== roll.startedAt) {
+          // Once a roll: the tinted ones take this tire's glow, softened towards white.
+          streakTintedFor.current = roll.startedAt
+          _tint.copy(tireGlow(roll.tireId)).lerp(WHITE, 0.35)
           for (let i = 0; i < STREAKS; i += 1) lines.setColorAt(i, streakState[i].tinted ? _tint : WHITE)
           lines.instanceColor.needsUpdate = true
         }
@@ -647,10 +758,13 @@ export default function Slide() {
       <group ref={gatesRef} />
       <primitive ref={warpRef} object={assets.warpCanyon} />
       <primitive ref={trophyRef} object={assets.trophies} />
+      <primitive ref={tireGlowRef} object={assets.tireGlows} />
+      <primitive ref={tiresRef} object={assets.tires} />
+      <Walls />
       <primitive ref={streakRef} object={assets.streakMesh} />
       <primitive ref={starsRef} object={assets.stars} />
-      <SlideFX />
-      {sliding && motionBlur > 0 && <SpeedBlur samples={motionBlur} antialias={antialias} />}
+      <RollFX />
+      {rolling && motionBlur > 0 && <SpeedBlur samples={motionBlur} antialias={antialias} />}
     </group>
   )
 }

@@ -1,10 +1,14 @@
+import { openBoxityLeaderboard } from '../../bloxity/services'
 import { BOARD_INFO, boardRows } from '../../game/world/boards'
 import { useGame } from '../../store/game'
 import StrokeText from '../StrokeText'
 import { u } from '../hud/style'
 import Panel from './Panel'
 
-/** The three leaderboards, the same data as the boards in the lobby. */
+/**
+ * The four leaderboards, the same data as the boards in the lobby. Inside Boxity each
+ * title also opens Boxity's own board for it (all players, all time).
+ */
 export function LeaderboardsPanel() {
   const leaderboards = useGame((s) => s.leaderboards)
   const profile = useGame((s) => s.profile)
@@ -19,12 +23,17 @@ export function LeaderboardsPanel() {
           </StrokeText>
         </p>
       )}
-      <div className="grid grid-cols-1 md:grid-cols-3" style={{ gap: u(14) }}>
+      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4" style={{ gap: u(14) }}>
         {Object.entries(BOARD_INFO).map(([id, info]) => (
           <div key={id} style={{ borderRadius: u(8), border: `${u(5)} solid #111`, background: 'linear-gradient(180deg,#1d2a5c,#101634)', overflow: 'hidden' }}>
-            <div className="text-center" style={{ background: info.color, padding: u(8), fontSize: u(36) }}>
+            <button
+              type="button"
+              onClick={() => openBoxityLeaderboard(id)}
+              className="pp-btn pointer-events-auto block w-full text-center"
+              style={{ background: info.color, padding: u(8), fontSize: u(36) }}
+            >
               <StrokeText stroke={u(7)}>{info.title}</StrokeText>
-            </div>
+            </button>
             <div style={{ padding: u(8) }}>
               {boardRows(leaderboards, profile, id)
                 .slice(0, 10)

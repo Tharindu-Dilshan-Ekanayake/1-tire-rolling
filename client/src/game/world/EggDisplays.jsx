@@ -27,7 +27,7 @@ const EGG_LOOKS = {
   meadow: { pattern: 1, glow: '#7cf08a' },
   sunset: { pattern: 2, glow: '#ffb347' },
   unicorn: { pattern: 3, glow: '#ffb0f0' },
-  demon: { pattern: 4, glow: '#ff3b1e' },
+  volcano: { pattern: 4, glow: '#ff6a14' },
 }
 
 const vertexHead = /* glsl */ `

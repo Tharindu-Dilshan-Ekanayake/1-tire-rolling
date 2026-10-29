@@ -275,6 +275,6 @@ canvas {
     filter: brightness(1.12) drop-shadow(0 0 calc(var(--px) * 22) rgba(120, 255, 90, 0.85));
   }
 }
-.pp-slide-btn {
+.pp-roll-btn {
   animation: pp-pulse 1.1s ease-in-out infinite;
 }

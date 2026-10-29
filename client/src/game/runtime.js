@@ -14,13 +14,13 @@ import { SPAWN } from '@shared/world'
 export const runtime = {
   player: {
     position: new Vector3(SPAWN.x, 0, SPAWN.z),
-    /** Facing, radians about +Y. PI faces north (-Z), towards the slide. */
+    /** Facing, radians about +Y. PI faces north (-Z), towards the track. */
     yaw: Math.PI,
     speed: 0,
     grounded: true,
-    /** 'idle' | 'walk' | 'run' (on a treadmill) | 'jump' | 'slide' - what other players see. */
+    /** 'idle' | 'walk' | 'run' (training on a pad) | 'jump' - what other players see. */
     anim: 'idle',
-    /** Set when the controller should ignore input (sliding, cutscenes). */
+    /** Set when the controller should ignore input (while your tire rolls). */
     frozen: false,
   },
 
@@ -32,7 +32,7 @@ export const runtime = {
   },
 
   camera: {
-    /** 'follow' orbits the player; 'slide' is driven by the slide (see slide/Slide.jsx). */
+    /** 'follow' orbits the player; 'roll' chases your tire (see roll/Roll.jsx). */
     mode: 'follow',
     yaw: 0,
     pitch: 0.36,
@@ -41,7 +41,7 @@ export const runtime = {
     snap: false,
   },
 
-  /** What the sun's shadow box centres on while the camera chases you down the hill. */
+  /** What the sun's shadow box centres on while the camera chases your tire. */
   flightFocus: null,
 
   /**
@@ -51,12 +51,12 @@ export const runtime = {
   remotePets: [],
 
   /**
-   * Other players' slides to replay as ghost riders, by their session id:
-   * `{ distance, duration, boardId, x, z, startedAt }`.
+   * Other players' rolls to replay as ghost tires, by their session id:
+   * `{ distance, duration, blocked, tireId, x, z, startedAt }`.
    */
-  ghostSlides: new Map(),
+  ghostRolls: new Map(),
 
-  /** Walls that come and go at runtime, e.g. locked treadmills. */
+  /** Walls that come and go at runtime, e.g. locked pads. */
   dynamicColliders: [],
 
   /**

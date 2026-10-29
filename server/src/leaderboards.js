@@ -2,9 +2,9 @@ import { getSphinxStock, refreshStock, saveProfile, topPlayers } from './db.js'
 import { activePlayers, broadcastAll } from './registry.js'
 
 const REFRESH_MS = 60_000
-let cached = { rebirths: [], playtime: [], distance: [], updatedAt: 0 }
+let cached = { rebirths: [], wins: [], distance: [], playtime: [], updatedAt: 0 }
 
-/** Latest top-10 boards (Total Rebirths, Total Playtime, Longest Slide). */
+/** Latest top-10 boards (Top Rebirths, Top Wins, Longest Roll, Top Playtime). */
 export function getLeaderboards() {
   return cached
 }

@@ -22,7 +22,7 @@ const roundButton = (size, background) => ({
 /**
  * On-screen controls for touch devices: a floating joystick that appears wherever the
  * left side of the screen is touched, and a jump button. Everything else is walking
- * onto things: the slide zone, a treadmill, a pad.
+ * onto things: the roll zone, a training pad, a tire stand.
  *
  * Writes straight into `runtime.input` and moves the knob through refs, so dragging
  * never re-renders React.
