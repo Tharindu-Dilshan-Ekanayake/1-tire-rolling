@@ -9,10 +9,15 @@ import { TRAIN_INTERVAL } from '@shared/balance'
 
 /** The flat tire's radius on a pad, and how high a bounce goes. */
 export const PAD_TIRE_SIZE = 1.3
-const BOUNCE_HEIGHT = 1.25
+const BOUNCE_HEIGHT = 0.85
+/**
+ * Lying on a pad a tire is squashed to this much of its thickness: a low, wide
+ * trampoline you land right on, not a thick puck you float above.
+ */
+export const PAD_FLAT = 0.5
 
 /** Height of the top of a tire of `width` (tire.js tireWidth) lying flat: where feet land. */
-export const padTireTop = (width) => 0.52 * width * PAD_TIRE_SIZE
+export const padTireTop = (width) => 0.6 * width * PAD_TIRE_SIZE * PAD_FLAT
 
 /**
  * The bounce `time` seconds in: `height` of the feet above the tire's top, vertical

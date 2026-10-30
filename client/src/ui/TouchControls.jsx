@@ -109,14 +109,14 @@ export function TouchControls() {
       >
         <div
           ref={baseRef}
-          className="pointer-events-none absolute rounded-full border-4 border-white/70 bg-black/25"
+          // Resting low in the corner, clear of the menu tiles above it (and, held
+          // upright, of the Health bar below it): .touch-joy-rest in index.css.
+          className="touch-joy-rest pointer-events-none absolute rounded-full border-4 border-white/70 bg-black/25"
           style={{
             width: RADIUS * 2,
             height: RADIUS * 2,
             opacity: 0.35,
             left: RADIUS,
-            // Resting low in the corner, clear of the menu tiles above it.
-            top: `calc(100% - ${RADIUS * 2.3}px)`,
           }}
         >
           <div
@@ -130,8 +130,8 @@ export function TouchControls() {
       <button
         type="button"
         aria-label="Jump"
-        className="pp-btn pp-chunky absolute z-20 flex touch-none items-center justify-center rounded-full text-white"
-        style={{ ...roundButton(70, GRADIENTS.slate), right: 14, bottom: 14 }}
+        className="touch-jump pp-btn pp-chunky absolute z-20 flex touch-none items-center justify-center rounded-full text-white"
+        style={roundButton(70, GRADIENTS.slate)}
         onPointerDown={(e) => {
           e.preventDefault()
           runtime.input.jump = true

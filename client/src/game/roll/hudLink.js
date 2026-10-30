@@ -52,6 +52,27 @@ export function zoneBarPosition(m) {
   return (i + Math.min(1, (m - start) / Math.max(1, end - start))) / ZONES.length
 }
 
+let tunnel = null
+let tunnelShown = -1
+
+/** The speed tunnel overlay (HUD.jsx), or null. */
+export function setSpeedTunnelElement(el) {
+  tunnel = el
+  tunnelShown = -1
+}
+
+/** How strongly the speed tunnel shows, 0-1; written at most UPDATE_HZ times a second. */
+export function writeSpeed(amount, now = performance.now()) {
+  if (!tunnel) return
+  const k = Math.round(amount * 20) / 20
+  if (k === tunnelShown || (now - lastSpeedWrite < UPDATE_MS && k !== 0)) return
+  tunnelShown = k
+  lastSpeedWrite = now
+  tunnel.style.opacity = String(k)
+  tunnel.style.visibility = k > 0 ? 'visible' : 'hidden'
+}
+let lastSpeedWrite = 0
+
 /** Shows zone `index`'s `name` under the distance, filled with `gradient` (a CSS gradient). */
 export function writeZone(index, name, gradient) {
   if (zoneSpans.length === 0 || name === shownZone) return

@@ -7,10 +7,9 @@ import { clampToWalkable, groundHeightAt, padAt, STATIC_COLLIDERS } from '@share
 
 import { sfx } from '../audio/sfx'
 import { getGame } from '../store/game'
-import { getQuality } from '../store/quality'
 import ErrorBoundary from '../ui/ErrorBoundary'
 import FallbackAvatar from './FallbackAvatar'
-import { PAD_TIRE_SIZE, padBounce, padTireTop } from './padBounce'
+import { PAD_FLAT, PAD_TIRE_SIZE, padBounce, padTireTop } from './padBounce'
 import PlayerAvatar from './PlayerAvatar'
 import { PUSH_AHEAD, TIRE_SIZE } from './roll/path'
 import { roll } from './roll/rollControl'
@@ -107,7 +106,7 @@ export function Player({ onAvatarReady }) {
   const vy = useRef(0)
   /** The waiting tire's pop-in (0-1) on the roll zone. */
   const ready = useRef(0)
-  const tire = useMemo(() => createTireModel({ glowSize: 2.6 }), [])
+  const tire = useMemo(() => createTireModel(), [])
 
   /** Handed to the avatar so it can pose itself. A ref: written every frame. */
   const motionRef = useRef({
@@ -155,7 +154,6 @@ export function Player({ onAvatarReady }) {
         t.spin.rotation.x = -time * 1.5
         t.scale.setScalar(READY_SIZE * easeOutBack(ready.current))
         t.setTire(getGame().profile.equippedTire)
-        t.setGlowSize(2.6 * getQuality().boardGlow)
       }
     }
 
@@ -265,10 +263,10 @@ export function Player({ onAvatarReady }) {
       t.quaternion.copy(LIE_FLAT)
       t.spin.rotation.x = 0
       // Flattening as you land on it (its axle, local X, now points up).
-      t.scale.set(PAD_TIRE_SIZE * (1 - 0.22 * bounce.squash), PAD_TIRE_SIZE * (1 + 0.06 * bounce.squash), PAD_TIRE_SIZE * (1 + 0.06 * bounce.squash))
+      t.scale.set(PAD_TIRE_SIZE * PAD_FLAT * (1 - 0.3 * bounce.squash), PAD_TIRE_SIZE * (1 + 0.06 * bounce.squash), PAD_TIRE_SIZE * (1 + 0.06 * bounce.squash))
       t.setTire(id)
-      t.setGlowSize(1.6 * getQuality().boardGlow)
-      visual.position.y = top * (1 - 0.22 * bounce.squash) + bounce.height
+      // Feet on the tire's top, which dips as you land on it.
+      visual.position.y = top * (1 - 0.15 * bounce.squash) + bounce.height
     } else if (visual) {
       visual.position.y = 0
     }

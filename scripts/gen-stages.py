@@ -1,16 +1,31 @@
-"""Writes the stage table into shared/balance.js: 40 stages, STAGE metres each.
+"""Writes the stage table into shared/balance.js: 60 stages, each a little longer than the last.
 
-Usage: python scripts/gen-stages.py [wins growth per stage = 1.8] [wins per metre in stage 1 = 0.006]
+Usage: python scripts/gen-stages.py
 Then check the pacing with: node scripts/balance-sim.mjs
+
+Two things are set here, separately:
+- where each gate stands (what players see): stage i is FIRST_LENGTH + LENGTH_STEP * i
+  metres long, so the track stretches a little every stage;
+- the Health each gate needs: about RATIO_START times the last at first, rising slowly
+  towards RATIO_END. Health grows by about that much per rebirth late in the game, so a
+  new stage keeps coming every few minutes instead of every twenty.
+How far a tire rolls follows from the two (logic.rollReach interpolates between gates).
 """
 import math
-import re
-import sys
+import pathlib
 
-G = float(sys.argv[1]) if len(sys.argv) > 1 else 1.8
-W0 = float(sys.argv[2]) if len(sys.argv) > 2 else 0.006
-STAGE = 300
-BASE, K, H0 = 60, 260, 50
+FIRST_LENGTH = 94
+LENGTH_STEP = 6
+# Health that just reaches the first gate on open ground.
+FIRST_REACH = 8.5
+RATIO_START = 1.9
+RATIO_STEP = 0.009
+# A gate's wall needs this much more than the Health that reaches it (WALL_MARGIN).
+MARGIN = 1.3
+# Wins: per metre in the first stage, and how they follow the stage's Health (as a
+# power of it): about the pace of tire prices.
+W0 = 0.006
+WINS_POWER = 0.48
 
 stages = [
     ('grassy', 'Grassy Meadow', 'grassy'), ('autumn', 'Autumn Forest', 'autumn'), ('desert', 'Desert Canyon', 'desert'),
@@ -27,6 +42,13 @@ stages = [
     ('deep', 'Deep Ocean', 'ocean'), ('cyber', 'Cyber City', 'neon'), ('castle', 'Sky Castle', 'sky'),
     ('prism', 'Prism Path', 'rainbow'), ('lunar', 'Lunar Craters', 'moon'), ('lights', 'Northern Lights', 'aurora'),
     ('galaxy', 'Galaxy Rift', 'space'), ('infinity', 'Infinity', 'cosmic'),
+    ('sunflower', 'Sunflower Fields', 'grassy'), ('harvest', 'Harvest Valley', 'autumn'), ('oasis', 'Golden Oasis', 'desert'),
+    ('lagoon', 'Blue Lagoon', 'beach'), ('canopy', 'Treetop Canopy', 'jungle'), ('yeti', 'Yeti Mountain', 'frozen'),
+    ('lantern', 'Lantern Garden', 'cherry'), ('cupcake', 'Cupcake Kingdom', 'candy'), ('glowcap', 'Glowcap Grotto', 'mushroom'),
+    ('inferno', 'Inferno Peak', 'volcano'), ('bayou', 'Firefly Bayou', 'swamp'), ('geode', 'Geode Valley', 'crystal'),
+    ('atlantis', 'Atlantis', 'ocean'), ('arcade', 'Arcade Avenue', 'neon'), ('islands', 'Sky Islands', 'sky'),
+    ('unicorn', 'Unicorn Trail', 'rainbow'), ('mars', 'Red Planet', 'moon'), ('comet', 'Comet Ice', 'aurora'),
+    ('nebula', 'Nebula', 'space'), ('beyond', 'The Beyond', 'cosmic'),
 ]
 
 
@@ -40,27 +62,34 @@ def r2(n):
 def num(n):
     if n >= 1e6:
         e = math.floor(math.log10(n))
-        m = n / 10 ** e
-        return f"{m:g}e{e}"
+        return f"{n / 10 ** e:.2g}e{e}"
     return f"{n:g}"
 
 
 lines = []
+start = 0
+reach = FIRST_REACH
 for i, (sid, name, theme) in enumerate(stages):
-    start = i * STAGE
     if i == 0:
         wall = smash = disc = 0
+        wpm = W0
     else:
-        # Health that just reaches the gate on open ground, and a bit more to smash it.
-        reach = H0 * (math.exp((start - BASE) / K) - 1)
-        wall = r2(1.3 * reach)
-        smash = r2(2 * G ** (i - 1))
-        disc = r2(5 * G ** (i - 1))
-    wpm = float(f"{W0 * G ** i:.3g}")
+        if i > 1:
+            start += FIRST_LENGTH + LENGTH_STEP * (i - 1)
+            reach *= RATIO_START + RATIO_STEP * i
+        else:
+            start = FIRST_LENGTH + LENGTH_STEP
+        wall = r2(MARGIN * reach)
+        m = (reach / FIRST_REACH) ** WINS_POWER
+        smash = max(1, r2(2 * m))
+        disc = max(2, r2(5 * m))
+        wpm = float(f"{W0 * 1.2 * m:.3g}")
     lines.append(f"  {{ id: '{sid}', name: '{name}', theme: '{theme}', start: {start}, wall: {num(wall)}, winsPerMeter: {num(wpm)}, smash: {num(smash)}, discover: {num(disc)} }},")
 
-p = __import__('pathlib').Path(__file__).resolve().parent.parent / 'shared' / 'balance.js'
-s = open(p, encoding='utf-8').read()
-s = re.sub(r"export const ZONES = \[.*?\n\]", "export const ZONES = [\n" + "\n".join(lines) + "\n]", s, flags=re.S)
-open(p, 'w', encoding='utf-8').write(s)
-print(f"G={G} W0={W0}")
+p = pathlib.Path(__file__).resolve().parent.parent / 'shared' / 'balance.js'
+s = p.read_text(encoding='utf-8')
+a = s.index('export const ZONES = [')
+b = s.index('\n]', a) + 2
+s = s[:a] + 'export const ZONES = [\n' + '\n'.join(lines) + s[b - 2:]
+p.write_text(s, encoding='utf-8')
+print(f'{len(stages)} stages, track {start} m, last wall {num(r2(MARGIN * reach))}')

@@ -20,10 +20,10 @@ import {
   PLAYTIME_REWARDS,
   RARITIES,
   REBIRTH_SKIP_ROLLS,
+  rebirthGift,
   rebirthMultiplier,
   ROLL_BASE,
   ROLL_H0,
-  ROLL_K,
   ROLL_RECOVERY,
   rollDuration,
   SHOP,
@@ -33,8 +33,12 @@ import {
   TROPHY_METERS,
   TROPHY_SPACING,
   TUTORIAL,
+  WALL_MARGIN,
   WALL_STOP,
+  WORLD_PORTALS,
+  WORLD_ZONES,
   ZONES,
+  zonesOf,
 } from './balance.js'
 
 /**
@@ -82,7 +86,12 @@ export function createProfile(id, name) {
       wallsBroken: 0,
       /** Furthest zone ever reached (index into ZONES): its `discover` prize is paid once. */
       bestZone: 0,
+      /** The same for World 2's stages. */
+      bestZone2: 0,
     },
+    /** The world you're in (index into WORLDS), and whether World 2's portal is open. */
+    world: 0,
+    world2Unlocked: false,
     lastPad: -1,
     lastSeen: 0,
     settings: { autoRebirth: false, autoRoll: false },
@@ -110,10 +119,14 @@ export function normalizeProfile(raw, id, name) {
   p.ownedTires = owned.length ? owned : ['bicycle']
   if (!p.ownedTires.includes(p.equippedTire)) p.equippedTire = p.ownedTires[0]
   p.stats.bestZone = Math.min(ZONES.length - 1, Math.max(0, Math.floor(p.stats.bestZone) || 0))
+  p.stats.bestZone2 = Math.min(ZONES.length - 1, Math.max(0, Math.floor(p.stats.bestZone2) || 0))
+  p.world2Unlocked = raw.world2Unlocked === true
+  p.world = p.world2Unlocked && raw.world === 1 ? 1 : 0
   // Levels follow from Health; recompute rather than trust a stored one.
   p.level = levelFor(p.health, p.rebirths)
   // The tutorial is for brand-new players only: anyone who has rebirthed is past it.
   if (p.rebirths > 0) p.tutorialStep = TUTORIAL.length
+  p.tutorialStep = Math.min(TUTORIAL.length, Math.max(0, Math.floor(p.tutorialStep) || 0))
   p.v = PROFILE_VERSION
   return p
 }
@@ -254,13 +267,34 @@ export function applyRebirth(profile) {
   profile.tutorialStep = TUTORIAL.length
   profile.health = 0
   profile.level = 1
-  return { ok: true, rebirths: profile.rebirths }
+  const gift = rebirthGift(profile.rebirths)
+  if (gift) addItem(profile, gift.item, gift.amount)
+  return { ok: true, rebirths: profile.rebirths, gift }
 }
 
 // --- Rolling ------------------------------------------------------------------------
 
 /** How far `health` rolls on open ground, before any wall gets in the way. */
-export const rollReach = (health) => ROLL_BASE + ROLL_K * Math.log1p(Math.max(0, health) / ROLL_H0)
+/** Health that just reaches each gate on open ground (its wall needs WALL_MARGIN times it). */
+const GATE_REACH = ZONES.map((z) => z.wall / WALL_MARGIN)
+
+/**
+ * How far `health` rolls on open ground, before any wall gets in the way: up to the
+ * first gate along a gentle curve from ROLL_BASE, then from each gate's mark to the next
+ * as Health climbs from one gate's reach to the next (in log terms), and past the last
+ * gate at the last stage's pace.
+ */
+export function rollReach(health) {
+  const h = Math.max(0, health)
+  const first = GATE_REACH[1]
+  if (h <= first) return ROLL_BASE + ((ZONES[1].start - ROLL_BASE) * Math.log1p(h / ROLL_H0)) / Math.log1p(first / ROLL_H0)
+  let i = 1
+  while (i + 1 < ZONES.length && h >= GATE_REACH[i + 1]) i += 1
+  // Past the last gate, keep going at the last stage's pace.
+  const a = i + 1 < ZONES.length ? i : i - 1
+  const span = ZONES[a + 1].start - ZONES[a].start
+  return ZONES[i].start + (span * Math.log(h / GATE_REACH[i])) / Math.log(GATE_REACH[a + 1] / GATE_REACH[a])
+}
 
 export function zoneIndexAt(meter) {
   for (let i = ZONES.length - 1; i >= 0; i -= 1) {
@@ -294,24 +328,29 @@ export function trophiesWithin(distance) {
   return out
 }
 
-export const trophyValue = (meter) => Math.max(1, Math.round(ZONES[zoneIndexAt(meter)].winsPerMeter * TROPHY_METERS))
+/** Wins the trophy at `meter` is worth in `world`, before multipliers. */
+export const trophyValue = (meter, world = 0) => Math.max(1, Math.round(zonesOf(world)[zoneIndexAt(meter)].winsPerMeter * TROPHY_METERS))
 
-/** Wins for a roll before multipliers: metres in each zone, trophies and smashed walls. */
-export function baseRollWins(distance) {
+/**
+ * Wins for a roll in `world` before multipliers: metres in each zone, trophies and
+ * smashed walls. (All worlds' stages start at the same metres; only what they pay differs.)
+ */
+export function baseRollWins(distance, world = 0) {
+  const zones = zonesOf(world)
   let wins = 0
-  for (let i = 0; i < ZONES.length; i += 1) {
-    const start = ZONES[i].start
-    const end = i + 1 < ZONES.length ? ZONES[i + 1].start : Infinity
+  for (let i = 0; i < zones.length; i += 1) {
+    const start = zones[i].start
+    const end = i + 1 < zones.length ? zones[i + 1].start : Infinity
     const metres = Math.max(0, Math.min(distance, end) - start)
-    wins += metres * ZONES[i].winsPerMeter
-    if (i > 0 && distance >= start) wins += ZONES[i].smash
+    wins += metres * zones[i].winsPerMeter
+    if (i > 0 && distance >= start) wins += zones[i].smash
   }
-  for (let m = TROPHY_FIRST; m <= distance; m += TROPHY_SPACING) wins += trophyValue(m)
+  for (let m = TROPHY_FIRST; m <= distance; m += TROPHY_SPACING) wins += trophyValue(m, world)
   return wins
 }
 
-/** Wins a roll at `health` pays before multipliers. */
-export const rollWinsAt = (health) => baseRollWins(rollOutcome(health).distance)
+/** Wins a roll at `health` pays in `world` before multipliers. */
+export const rollWinsAt = (health, world = 0) => baseRollWins(rollOutcome(health).distance, world)
 
 /**
  * A roll down the track. Health is not consumed. Returns everything the client needs
@@ -322,14 +361,16 @@ export function applyRoll(profile, now) {
   const outcome = rollOutcome(profile.health)
   const distance = Math.round(outcome.distance * 10) / 10
   const multiplier = winsMultiplier(profile, now)
-  const wins = Math.max(1, Math.round(baseRollWins(distance) * multiplier))
-  // First time into a zone: its discovery prize, paid once ever.
+  const world = profile.world
+  const wins = Math.max(1, Math.round(baseRollWins(distance, world) * multiplier))
+  // First time into a zone: its discovery prize, paid once ever (once in each world).
   const zone = zoneIndexAt(distance)
+  const bestKey = world === 1 ? 'bestZone2' : 'bestZone'
   const discovered = []
   let prize = 0
-  for (let i = profile.stats.bestZone + 1; i <= zone; i += 1) {
+  for (let i = profile.stats[bestKey] + 1; i <= zone; i += 1) {
     discovered.push(i)
-    prize += ZONES[i].discover
+    prize += WORLD_ZONES[world][i].discover
   }
   const best = distance > profile.stats.bestDistance
   profile.wins += wins + prize
@@ -337,7 +378,7 @@ export function applyRoll(profile, now) {
   profile.stats.rolls += 1
   profile.stats.wallsBroken += outcome.broken
   profile.stats.bestDistance = Math.max(profile.stats.bestDistance, distance)
-  profile.stats.bestZone = Math.max(profile.stats.bestZone, zone)
+  profile.stats[bestKey] = Math.max(profile.stats[bestKey], zone)
   const duration = rollDuration(distance)
   return {
     ok: true,
@@ -355,7 +396,7 @@ export function applyRoll(profile, now) {
 }
 
 /** Wins (before multipliers) of a roll at your max level: what packs and skips cost in. */
-export const maxRollWins = (profile) => rollWinsAt(healthForLevel(levelCap(profile.rebirths)))
+export const maxRollWins = (profile) => rollWinsAt(healthForLevel(levelCap(profile.rebirths)), profile.world)
 
 /**
  * The Health packs as they stand for you now: `[{ amount, price }]`. Both follow the
@@ -363,7 +404,7 @@ export const maxRollWins = (profile) => rollWinsAt(healthForLevel(levelCap(profi
  */
 export function healthPacks(profile) {
   const next = healthForLevel(profile.level + 1)
-  const wins = rollWinsAt(next)
+  const wins = rollWinsAt(next, profile.world)
   return HEALTH_PACKS.map((pack) => ({
     amount: niceRound(Math.max(10, next * pack.share)),
     price: niceRound(Math.max(3, wins * pack.rolls)),
@@ -392,6 +433,25 @@ export function skipRebirth(profile) {
   profile.wins -= price
   profile.level = levelCap(profile.rebirths)
   return applyRebirth(profile)
+}
+
+// --- Worlds -------------------------------------------------------------------------
+
+/**
+ * Steps through the world portal: from World 1 into World 2 (opening it for good the
+ * first time you hold enough Wins - they aren't spent), or from World 2 back home.
+ */
+export function usePortal(profile) {
+  if (profile.world === 1) {
+    profile.world = 0
+    return { ok: true, world: 0 }
+  }
+  const need = WORLD_PORTALS.world2.wins
+  if (!profile.world2Unlocked && profile.wins < need) return { ok: false, error: `Need ${need} Wins`, need }
+  const first = !profile.world2Unlocked
+  profile.world2Unlocked = true
+  profile.world = 1
+  return { ok: true, world: 1, first }
 }
 
 // --- Tires --------------------------------------------------------------------------

@@ -2,7 +2,6 @@ import { useFrame } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Color, Matrix4, Quaternion, Vector3 } from 'three'
 
-import { ZONES } from '@shared/balance'
 import { formatNumber } from '@shared/format'
 import { winsMultiplier } from '@shared/logic'
 import { mulberry32 } from '@shared/rng'
@@ -17,9 +16,10 @@ import { burst } from '../fx/fxQueue'
 import { spawnScattered } from '../fx/popups'
 import { sharedMaterials, STYLE } from '../materials'
 import { tireAccent, tireRim, tireRubber, tireWidth } from '../tire'
+import { perWorld, zones } from '../worldLook'
 import { surfaceY, TIRE_SIZE, WALL_THICK, zAt } from './path'
 import { roll } from './rollControl'
-import { GATE_BEAM_H, GATE_BEAM_Y, WALL_PLANK_TOP, WALLS, ZONE_THEMES } from './track'
+import { GATE_BEAM_H, GATE_BEAM_Y, WALL_COUNT, WALL_PLANK_TOP, walls as gatesHere, ZONE_THEMES } from './track'
 
 /**
  * The gates between stages, as in the reference: two striped pillars and a beam with
@@ -29,9 +29,11 @@ import { GATE_BEAM_H, GATE_BEAM_Y, WALL_PLANK_TOP, WALLS, ZONE_THEMES } from './
  * off the gate, which shudders from the hit.
  *
  * Every plank of every wall in view is one instance of one box mesh (one draw call),
- * every gate frame another (one more), and a smashed wall's planks become its debris:
- * they fly, tumble and come to rest on the floor, then everything is put back for the
- * next roll. No allocation per frame.
+ * every gate frame another (one more). A smashed wall bursts into small pieces - each
+ * plank breaks in three, the rails too, and a spray of splinters - blown out from where
+ * the tire hit: they fly, tumble and come to rest on the floor, then everything is put
+ * back for the next roll. Walls smashed one after another make a combo: "SMASH x3!",
+ * and a ding that climbs higher each time. No allocation per frame.
  */
 
 const HALF = CANYON_HALF_WIDTH
@@ -53,6 +55,10 @@ const RIM_BITS = 6
 const TIRE_BITS = RUBBER_BITS + RIM_BITS + 2
 /** How long, and how hard, a gate shudders when a tire breaks on it. */
 const SHAKE_MS = 700
+/** A smashed plank breaks into this many pieces; the splinters thrown with them. */
+const CHUNKS = 3
+const SPLINTERS = 24
+const RAIL_PIECES = 3
 
 const PLANK_COLORS = ['#a8743f', '#9a6636', '#b88449', '#8f5d31'].map((c) => new Color(c))
 
@@ -76,7 +82,21 @@ const FRAME = [
   [0, GATE_BEAM_Y - 0.1, 0, HALF * 2 + 4, 0.25, 1.9, '#ffffff', STYLE.GLOW],
 ]
 const FRAME_COLORS = FRAME.map((f) => (f[6] === 'gate' ? null : new Color(f[6])))
-const GATE_COLORS = WALLS.map((w) => new Color(ZONE_THEMES[w.zone.theme].gate))
+const gateColors = perWorld((zs) => zs.slice(1).map((z) => new Color(ZONE_THEMES[z.theme].gate)))
+/** Each stage's gate is built to match it: glowing in Neon City, lava at the volcano... */
+const GATE_STYLE_BY_THEME = {
+  neon: STYLE.GLOW,
+  crystal: STYLE.GLOW,
+  aurora: STYLE.GLOW,
+  rainbow: STYLE.RAINBOW,
+  volcano: STYLE.LAVA,
+  moon: STYLE.GALAXY,
+  space: STYLE.GALAXY,
+  cosmic: STYLE.GALAXY,
+  desert: STYLE.STUDS,
+  jungle: STYLE.STUDS,
+}
+const gateStyles = perWorld((zs) => zs.slice(1).map((z) => GATE_STYLE_BY_THEME[z.theme] ?? STYLE.STRIPES))
 
 /** The frames' instanced boxes, each with its own style (the shader reads it per instance). */
 function createFrames() {
@@ -88,6 +108,7 @@ function createFrames() {
   return mesh
 }
 const RAIL_COLOR = new Color('#6b4428')
+const SPLINTER_COLOR = new Color('#e8c48a')
 const SMASH_ICON = iconUrl('trophy')
 
 /** Each plank's look, seeded so every wall is the same ragged fence everywhere. */
@@ -101,6 +122,37 @@ const PLANK_SHAPES = (() => {
     return { x: -HALF + PLANK_W * (i + 0.5), h, w: PLANK_W - 0.08, y: h / 2, rail: false, color: PLANK_COLORS[i % PLANK_COLORS.length] }
   })
 })()
+
+/**
+ * A smashed wall's pieces, relative to the wall's centre on the floor: each plank in
+ * CHUNKS ragged lengths, each rail in thirds, and the splinters. Seeded, so every wall
+ * breaks the same way.
+ */
+const PIECE_SHAPES = (() => {
+  const r = mulberry32(29)
+  const out = []
+  for (let p = 0; p < PLANKS; p += 1) {
+    const plank = PLANK_SHAPES[p]
+    let y = 0
+    for (let c = 0; c < CHUNKS; c += 1) {
+      const h = c === CHUNKS - 1 ? plank.h - y : (plank.h / CHUNKS) * (0.75 + r() * 0.5)
+      out.push({ x: plank.x, y: y + h / 2, z: 0, w: plank.w, h, d: WALL_THICK, color: plank.color })
+      y += h
+    }
+  }
+  for (let k = PLANKS; k < PARTS; k += 1) {
+    const rail = PLANK_SHAPES[k]
+    for (let c = 0; c < RAIL_PIECES; c += 1) {
+      const w = rail.w / RAIL_PIECES
+      out.push({ x: -rail.w / 2 + w * (c + 0.5), y: rail.y, z: WALL_THICK / 2 + 0.25, w, h: rail.h, d: 0.5, color: RAIL_COLOR })
+    }
+  }
+  for (let k = 0; k < SPLINTERS; k += 1) {
+    out.push({ x: (r() - 0.5) * HALF * 1.6, y: 1 + r() * (WALL_PLANK_TOP - 2), z: 0, w: 0.14, h: 0.5 + r() * 0.7, d: 0.14, color: SPLINTER_COLOR, splinter: true })
+  }
+  return out
+})()
+const PIECES = PIECE_SHAPES.length
 
 const _m = new Matrix4()
 const _q = new Quaternion()
@@ -127,12 +179,14 @@ export function Walls() {
   /** Per wall index: when this roll smashed it (performance.now), or 0; and its pieces. */
   const state = useRef({
     rollId: -1,
-    smashedAt: new Float64Array(WALLS.length),
-    debris: WALLS.map(() => createDebris()),
+    smashedAt: new Float64Array(WALL_COUNT),
+    debris: Array.from({ length: WALL_COUNT }, () => createDebris(PIECES)),
+    /** Walls smashed so far this roll: the combo. */
+    combo: 0,
     blockedShown: false,
     popupAt: 0,
     pendingSmash: 0,
-    /** The shattered tire's pieces, and the gate it broke on (WALLS index) and when. */
+    /** The shattered tire's pieces, and the gate it broke on (walls() index) and when. */
     bits: createDebris(TIRE_BITS),
     bitSizes: Array.from({ length: TIRE_BITS }, () => new Vector3()),
     shattered: false,
@@ -141,7 +195,7 @@ export function Walls() {
   })
 
   const { mesh, frames, tireBits } = useMemo(() => {
-    const m = createBoxInstances(MAX_WALLS * PARTS, sharedMaterials().blocks, STYLE.STUDS)
+    const m = createBoxInstances(MAX_WALLS * PIECES, sharedMaterials().blocks, STYLE.STUDS)
     m.count = 0
     m.frustumCulled = false
     m.receiveShadow = true
@@ -174,26 +228,34 @@ export function Walls() {
       st.smashedAt.fill(0)
       st.blockedShown = false
       st.pendingSmash = 0
+      st.combo = 0
       st.shattered = false
       st.shakeWall = -1
     }
 
     // Smash the walls the tire reaches this frame, if it's strong enough for them.
     if (roll.active && roll.phase !== 'launch') {
-      for (let i = 0; i < WALLS.length; i += 1) {
-        const w = WALLS[i]
+      const ahead = gatesHere()
+      for (let i = 0; i < ahead.length; i += 1) {
+        const w = ahead[i]
         if (st.smashedAt[i] || w.index > roll.broken) continue
         if (roll.meter + TIRE_SIZE < w.meter - WALL_THICK / 2) continue
         st.smashedAt[i] = now
-        smash(st.debris[i], w.meter, Math.min(Math.max(roll.speed, 12), 70))
+        st.combo += 1
+        smash(st.debris[i], w.meter, roll.position.x, Math.min(Math.max(roll.speed, 12), 70))
         st.pendingSmash += w.zone.smash
-        sfx.wallSmash()
+        sfx.wallSmash(st.combo)
         roll.hitAt = now
-        if (getQuality().particles) burst({ x: roll.position.x, y: roll.position.y + 1, z: zAt(w.meter), count: 26, palette: 'gold', speed: 8 })
+        if (getQuality().particles) {
+          const at = { x: roll.position.x, y: roll.position.y + 1, z: zAt(w.meter) }
+          burst({ ...at, count: 34, palette: 'wood', speed: 11 })
+          burst({ ...at, count: 18, palette: 'gold', speed: 8 })
+        }
       }
       if (st.pendingSmash > 0 && now - st.popupAt > POPUP_MS) {
         const wins = Math.round(st.pendingSmash * winsMultiplier(getGame().profile, Date.now()))
-        spawnScattered(`SMASH! +${formatNumber(wins)}`, { iconUrl: SMASH_ICON, scale: 1.35 })
+        const word = st.combo > 1 ? `SMASH x${st.combo}!` : 'SMASH!'
+        spawnScattered(`${word} +${formatNumber(wins)}`, { iconUrl: SMASH_ICON, scale: 1.35 + 0.08 * Math.min(st.combo, 8) })
         st.pendingSmash = 0
         st.popupAt = now
       }
@@ -208,7 +270,7 @@ export function Walls() {
         sfx.wallSmash()
         if (getQuality().particles) burst({ x: roll.position.x, y: roll.position.y, z: roll.position.z, count: 40, palette: 'power', speed: 9 })
         spawnScattered('TIRE BROKE!', { iconUrl: iconUrl('tire'), scale: 1.6 })
-        spawnScattered(`Need ${formatNumber(ZONES[roll.blocked].wall)} Health to smash!`, { iconUrl: iconUrl('heart'), scale: 1.2 })
+        spawnScattered(`Need ${formatNumber(zones()[roll.blocked].wall)} Health to smash!`, { iconUrl: iconUrl('heart'), scale: 1.2 })
       }
     }
 
@@ -217,8 +279,12 @@ export function Walls() {
     let count = 0
     let shown = 0
     let framed = 0
-    for (let i = 0; i < WALLS.length && shown < MAX_WALLS; i += 1) {
-      const w = WALLS[i]
+    const frameStyles = gates.geometry.getAttribute('aStyle')
+    const gateList = gatesHere()
+    const colors = gateColors()
+    const styles = gateStyles()
+    for (let i = 0; i < gateList.length && shown < MAX_WALLS; i += 1) {
+      const w = gateList[i]
       if (w.meter < focus - BEHIND || w.meter > focus + AHEAD) continue
       shown += 1
       const z = zAt(w.meter)
@@ -230,19 +296,26 @@ export function Walls() {
       for (let f = 0; f < FRAME.length; f += 1) {
         const [fx, fy, fz, sx, sy, sz] = FRAME[f]
         gates.setMatrixAt(framed, _m.compose(_p.set(fx, base + fy, z + fz), _q, _s.set(sx, sy, sz)))
-        gates.setColorAt(framed, FRAME_COLORS[f] || GATE_COLORS[i])
+        gates.setColorAt(framed, FRAME_COLORS[f] || colors[i])
+        // Pillars and beam in the stage's own style.
+        const style = FRAME_COLORS[f] ? FRAME[f][7] : styles[i]
+        if (frameStyles.array[framed] !== style) {
+          frameStyles.array[framed] = style
+          frameStyles.needsUpdate = true
+        }
         framed += 1
       }
-      for (let p = 0; p < PARTS; p += 1) {
-        const shape = PLANK_SHAPES[p]
-        if (smashed) {
+      if (smashed) {
+        // In pieces: flying, tumbling, then lying where they land.
+        for (let p = 0; p < PIECES; p += 1) {
+          const piece = PIECE_SHAPES[p]
           const d = debris[p]
           if (!d.resting) {
             d.vel.y -= GRAVITY * delta
             d.pos.addScaledVector(d.vel, delta)
             d.angle += d.spin * delta
             // The track drops away downhill: each piece lands on the floor where it is.
-            const floor = surfaceY(d.pos.z, 0.25)
+            const floor = surfaceY(d.pos.z, Math.min(piece.h, piece.d) / 2)
             if (d.pos.y < floor) {
               d.pos.y = floor
               d.vel.multiplyScalar(0.35)
@@ -252,17 +325,22 @@ export function Walls() {
             }
           }
           _q.setFromAxisAngle(d.axis, d.angle)
-          _p.copy(d.pos)
-        } else {
-          _q.identity()
-          _p.set(shape.x, base + shape.y, z + (shape.rail ? WALL_THICK / 2 + 0.25 : 0))
-          // Shuddering from the tire that just broke on it.
-          const since = now - st.shakeAt
-          if (roll.active && i === st.shakeWall && since < SHAKE_MS) {
-            const fade = 1 - since / SHAKE_MS
-            _p.z -= Math.sin(since * 0.07 + p) * 0.35 * fade
-            _q.setFromAxisAngle(_axis.set(1, 0, 0), Math.sin(since * 0.05 + p * 0.7) * 0.05 * fade)
-          }
+          walls.setMatrixAt(count, _m.compose(d.pos, _q, _s.set(piece.w, piece.h, piece.d)))
+          walls.setColorAt(count, piece.color)
+          count += 1
+        }
+        continue
+      }
+      for (let p = 0; p < PARTS; p += 1) {
+        const shape = PLANK_SHAPES[p]
+        _q.identity()
+        _p.set(shape.x, base + shape.y, z + (shape.rail ? WALL_THICK / 2 + 0.25 : 0))
+        // Shuddering from the tire that just broke on it.
+        const since = now - st.shakeAt
+        if (roll.active && i === st.shakeWall && since < SHAKE_MS) {
+          const fade = 1 - since / SHAKE_MS
+          _p.z -= Math.sin(since * 0.07 + p) * 0.35 * fade
+          _q.setFromAxisAngle(_axis.set(1, 0, 0), Math.sin(since * 0.05 + p * 0.7) * 0.05 * fade)
         }
         _s.set(shape.w, shape.h, shape.rail ? 0.5 : WALL_THICK)
         walls.setMatrixAt(count, _m.compose(_p, _q, _s))
@@ -343,21 +421,29 @@ function shatter(bits, st, center, tireId) {
 }
 
 /**
- * Throws a wall's planks: outwards from where the tire hit (the middle of the track,
- * near enough), forwards with the tire, up and tumbling.
+ * Bursts a wall: every piece blown away from where the tire hit (at `hitX`, about a
+ * tire's height up) - outwards, up, and a little on down the track - tumbling, the
+ * splinters fastest of all.
  */
-function smash(debris, meter, speed) {
+function smash(debris, meter, hitX, speed) {
   const z = zAt(meter)
   const base = surfaceY(z, 0)
-  for (let p = 0; p < PARTS; p += 1) {
-    const shape = PLANK_SHAPES[p]
+  for (let p = 0; p < PIECES; p += 1) {
+    const piece = PIECE_SHAPES[p]
     const d = debris[p]
-    d.pos.set(shape.x, base + shape.y, z)
-    const out = shape.x / HALF
-    d.vel.set(out * (6 + Math.random() * 8), 5 + Math.random() * 9, -speed * (0.35 + Math.random() * 0.5))
+    d.pos.set(piece.x, base + piece.y, z + piece.z)
+    const dx = piece.x - hitX
+    const dy = piece.y - TIRE_SIZE
+    const dist = Math.max(1, Math.hypot(dx, dy))
+    // Pieces near the hit fly hardest.
+    const blast = (piece.splinter ? 16 : 10) * (0.5 + Math.random() * 0.6) * Math.min(1.6, 6 / dist + 0.4)
+    // Mostly out to the sides and up, clearing a hole the tire bursts through, and only
+    // a little on down the track, so the camera isn't flying through a cloud of planks.
+    const side = dx / dist + Math.sign(dx || 1) * 0.6
+    d.vel.set(side * blast * 1.2, 5 + (dy / dist) * blast * 0.5 + Math.random() * 6, -speed * (0.12 + Math.random() * 0.25))
     d.axis.copy(_axis.set(Math.random() - 0.5, Math.random() - 0.5, Math.random() - 0.5).normalize())
     d.angle = 0
-    d.spin = (Math.random() - 0.5) * 14
+    d.spin = (Math.random() - 0.5) * (piece.splinter ? 26 : 16)
     d.resting = false
   }
 }

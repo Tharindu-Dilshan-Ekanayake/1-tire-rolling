@@ -5,6 +5,7 @@ import { WebGLRenderer } from 'three'
 
 import { useBloxity } from '../bloxity/BloxityContext'
 import { useBloxityStore } from '../bloxity/store'
+import { useGame } from '../store/game'
 import { useQuality } from '../store/quality'
 import ErrorBoundary from '../ui/ErrorBoundary'
 import BlobShadows from './BlobShadows'
@@ -27,6 +28,7 @@ import ShaderWarmup from './ShaderWarmup'
 import { FOG, SKY } from './sceneStyle'
 import Sky from './Sky'
 import World from './world/World'
+import { showLobbySky } from './worldLook'
 
 // r3f-perf is a dev-only overlay (?perf in the URL). The DEV check is static, so the
 // import and the package are dropped from production builds entirely.
@@ -55,6 +57,18 @@ function FirstFrameSignal({ onFirstFrame }) {
   return null
 }
 
+/**
+ * The world you're in: its lobby sky (and fog) now, and a track rebuilt with its stages
+ * (Roll is keyed on it).
+ */
+function WorldSky({ world }) {
+  const scene = useThree((s) => s.scene)
+  useEffect(() => {
+    showLobbySky(scene.fog)
+  }, [world, scene])
+  return null
+}
+
 /** Keeps the camera's far plane in step with the preset's view distance. */
 function ViewDistance({ far }) {
   const get = useThree((s) => s.get)
@@ -77,17 +91,27 @@ export function GameScene({ onReady }) {
   const { game } = useBloxity()
   const settings = useQuality((s) => s.settings)
   const antialias = useQuality((s) => s.antialias)
+  // A level picked in Settings rebuilds the whole 3D view with it.
+  const rebuild = useQuality((s) => s.rebuild)
   const degrade = useQuality((s) => s.degrade)
   // Boxity ad break: nothing renders until it's over.
   const adBreak = useBloxityStore((s) => s.adBreak)
+  const world = useGame((s) => s.profile.world)
 
   const [warmedUp, setWarmedUp] = useState(false)
   const [firstFrame, setFirstFrame] = useState(false)
   const [contextKey, setContextKey] = useState(0)
   const [contextLost, setContextLost] = useState(false)
+  /** The last rebuild (see quality.js) whose shaders have warmed up. */
+  const [warmedRebuild, setWarmedRebuild] = useState(0)
+  // Rebuilt for a new graphics level, still compiling: a cover instead of an empty sky.
+  const rebuilding = rebuild !== warmedRebuild
   const readySent = useRef(false)
 
-  const handleWarmedUp = useCallback(() => setWarmedUp(true), [])
+  const handleWarmedUp = useCallback(() => {
+    setWarmedUp(true)
+    setWarmedRebuild(useQuality.getState().rebuild)
+  }, [])
   const handleFirstFrame = useCallback(() => setFirstFrame(true), [])
 
   useEffect(() => {
@@ -122,6 +146,9 @@ export function GameScene({ onReady }) {
       setContextKey((k) => k + 1)
     }
     canvas.addEventListener('webglcontextlost', (e) => {
+      // A canvas already taken off the page was replaced on purpose (a new graphics
+      // level), and losing its context is how it's cleaned up: nothing to recover.
+      if (!canvas.isConnected) return
       e.preventDefault()
       setContextLost(true)
       // Don't wait forever for a 'restored' that may never come.
@@ -158,7 +185,7 @@ export function GameScene({ onReady }) {
   return (
     <>
       <Canvas
-        key={contextKey}
+        key={`${contextKey}:${rebuild}`}
         frameloop={adBreak ? 'never' : 'always'}
         dpr={dpr}
         gl={createRenderer}
@@ -175,6 +202,7 @@ export function GameScene({ onReady }) {
         <PerformanceMonitor bounds={() => [45, Infinity]} onDecline={handleDecline} />
 
         <Sky />
+        <WorldSky world={world} />
         <Lighting />
         <World />
         <WorldLabels />
@@ -194,7 +222,7 @@ export function GameScene({ onReady }) {
         <GainFX />
         {warmedUp && firstFrame && (
           <Suspense fallback={null}>
-            <Roll />
+            <Roll key={world} />
           </Suspense>
         )}
 
@@ -211,7 +239,7 @@ export function GameScene({ onReady }) {
         )}
       </Canvas>
 
-      {contextLost && (
+      {(contextLost || rebuilding) && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-sky-400/80 text-2xl text-white">
           <span className="pp-stroke">Reloading graphics…</span>
         </div>

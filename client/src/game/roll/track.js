@@ -1,5 +1,6 @@
-import { ZONES } from '@shared/balance'
 import { zoneIndexAt } from '@shared/logic'
+
+import { perWorld, zones } from '../worldLook'
 import { mulberry32 } from '@shared/rng'
 import { CANYON_HALF_WIDTH } from '@shared/world'
 
@@ -209,10 +210,14 @@ export const ZONE_THEMES = {
   },
 }
 
-export const themeAt = (m) => ZONE_THEMES[ZONES[zoneIndexAt(m)].theme]
+export const themeAt = (m) => ZONE_THEMES[zones()[zoneIndexAt(m)].theme]
 
-/** The gate (and its wooden wall) at the start of every stage after the first: `index` into ZONES. */
-export const WALLS = ZONES.slice(1).map((zone, i) => ({ zone, index: i + 1, meter: zone.start }))
+/**
+ * The gate (and its wooden wall) at the start of every stage after the first, in the
+ * world you're in: `index` into its stages. Every world's gates stand at the same metres.
+ */
+export const walls = perWorld((zs) => zs.slice(1).map((zone, i) => ({ zone, index: i + 1, meter: zone.start })))
+export const WALL_COUNT = walls().length
 
 /** How high the walls' planks stand (Walls.jsx), right up to the gate's beam. */
 export const WALL_PLANK_TOP = 9
@@ -261,8 +266,8 @@ function canyon(b, a, c, theme, wide) {
       b.add(px + side * 1.1, py, pz, 3, 0.08, 0.9, '#ffffff', STYLE.SMOOTH, -side * 0.7, SLOPE_EULER_X, 0)
     }
   }
-  // Light strips along the foot of each wall.
-  for (const side of [-1, 1]) slab(b, mid, side * (HALF - 1.2), 0.03, 0.5, 0.06, len, '#ffffff', STYLE.GLOW)
+  // Light strips along the foot of each wall, in the stage's colour.
+  for (const side of [-1, 1]) slab(b, mid, side * (HALF - 1.2), 0.03, 0.5, 0.06, len, theme.gate, STYLE.GLOW)
 }
 
 
@@ -814,6 +819,166 @@ const DECOR = {
   },
 }
 
+// --- Along the track ---------------------------------------------------------------
+
+/**
+ * Props standing on the canyon floor along both edges, where the chase camera sees them
+ * go by (the scenery above is mostly out of its view): each stage its own. They keep to
+ * the outer few metres, clear of every tire's line, and away from gates and ramps.
+ */
+const EDGE_IN = HALF - 2.4
+const EDGE_OUT = HALF - 0.8
+/** No props this close to a gate, or round a ramp. */
+const GATE_CLEAR = 9
+const GATE_METERS = walls().map((w) => w.meter)
+const RAMP_CLEAR = RAMP_LENGTH + 2
+
+function clearAt(m) {
+  for (const g of GATE_METERS) if (Math.abs(m - g) < GATE_CLEAR) return false
+  const lips = rampLips(m - RAMP_CLEAR, m + RAMP_CLEAR, _edgeLips)
+  return lips.length === 0
+}
+const _edgeLips = []
+
+/** Calls `place(x, y, z, side)` along both edges of the floor about every `spacing` metres. */
+function alongEdges(m0, m1, spacing, rand, density, place) {
+  for (let m = m0 + spacing * rand(); m < m1; m += spacing * (0.8 + rand() * 0.5)) {
+    if (m < DECOR_START || rand() > density || !clearAt(m)) continue
+    for (const side of [-1, 1]) {
+      if (rand() > 0.8) continue
+      const z = zAt(m)
+      place(side * (EDGE_IN + rand() * (EDGE_OUT - EDGE_IN)), surfaceY(z, 0), z, side)
+    }
+  }
+}
+
+/** A flower: a green stem, two leaves and a bright round head. */
+function flower(b, x, y, z, rand) {
+  const head = pick(rand, ['#ff4f9a', '#ffd23f', '#4fd2ff', '#ff7a1e', '#b86bff', '#ffffff'])
+  b.addOn(x, y, z, 0.15, 1.2, 0.15, '#3fa83a', STYLE.SMOOTH)
+  b.add(x + 0.25, y + 0.5, z, 0.45, 0.1, 0.22, '#4fc83a', STYLE.SMOOTH, 0, 0, 0.4)
+  b.add(x, y + 1.35, z, 0.75, 0.75, 0.3, head, STYLE.SMOOTH, rand() * 3)
+  b.add(x, y + 1.35, z + 0.12, 0.3, 0.3, 0.12, '#ffe45c', STYLE.GLOW)
+}
+
+/** A beach ball: stripes of colour stacked into a ball shape. */
+function beachBall(b, x, y, z) {
+  const colors = ['#ff3b5c', '#ffffff', '#2fb8ff', '#ffd23f']
+  colors.forEach((c, i) => b.addOn(x, y + i * 0.3, z, 1.2 - Math.abs(i - 1.5) * 0.25, 0.3, 1.2 - Math.abs(i - 1.5) * 0.25, c, STYLE.SMOOTH))
+}
+
+/** A lamp post with a glowing lantern on top. */
+function lampPost(b, x, y, z, glow) {
+  b.addOn(x, y, z, 0.25, 3.2, 0.25, '#3a3f48', STYLE.SMOOTH)
+  b.add(x, y + 3.4, z, 0.7, 0.7, 0.7, glow, STYLE.GLOW)
+  b.add(x, y + 3.85, z, 0.9, 0.15, 0.9, '#3a3f48', STYLE.SMOOTH)
+}
+
+/** A short glowing neon post with a ring of light. */
+function neonPost(b, x, y, z, rand) {
+  const glow = pick(rand, ['#39ff88', '#ff3bd8', '#3fd0ff', '#ffe14a'])
+  b.addOn(x, y, z, 0.35, 2.6, 0.35, '#1d1d2e', STYLE.SMOOTH)
+  b.add(x, y + 2.8, z, 1.1, 0.2, 1.1, glow, STYLE.GLOW)
+  b.add(x, y + 1.4, z, 0.5, 0.5, 0.5, glow, STYLE.GLOW, 0.7)
+}
+
+/** What lines the track's edges in each stage theme. */
+const EDGES = {
+  grassy(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 4, rand, density, (x, y, z) => (rand() < 0.7 ? flower(b, x, y, z, rand) : bush(b, x, y, z, 0.5, '#3fbf3a')))
+  },
+  autumn(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 6, rand, density, (x, y, z) => {
+      const k = rand()
+      if (k < 0.4) mushroom(b, x, y, z, 0.6)
+      else if (k < 0.7) hayBale(b, x, y, z, 0.6)
+      else b.addOn(x, y, z, 2.2, 0.08, 1.6, pick(rand, ['#ff8a1e', '#e8452c', '#ffc12a']), STYLE.SMOOTH, rand() * 3)
+    })
+  },
+  desert(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 7, rand, density, (x, y, z) => (rand() < 0.6 ? cactus(b, x, y + 0.3, z, 1.6 + rand() * 1.2, rand) : sandPile(b, x, y + 0.2, z, 0.5)))
+  },
+  beach(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 8, rand, density, (x, y, z) => {
+      const k = rand()
+      if (k < 0.4) umbrella(b, x, y + 0.3, z, 0.6, rand)
+      else if (k < 0.7) sandCastle(b, x, y + 0.2, z, 0.45)
+      else beachBall(b, x, y, z)
+    })
+  },
+  jungle(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 6, rand, density, (x, y, z) => (rand() < 0.7 ? bush(b, x, y, z, 0.7, pick(rand, ['#2e9a3a', '#3fbf3a', '#237a31'])) : ruin(b, x, y + 0.3, z, 0.35, rand)))
+  },
+  frozen(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 9, rand, density, (x, y, z) => (rand() < 0.4 ? snowman(b, x, y + 0.2, z) : iceCrystal(b, x, y, z, 0.6)))
+  },
+  cherry(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 7, rand, density, (x, y, z) => (rand() < 0.5 ? lampPost(b, x, y, z, '#ff9cc8') : bush(b, x, y, z, 0.55, '#ffc2dc')))
+  },
+  candy(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 5, rand, density, (x, y, z) => {
+      const k = rand()
+      if (k < 0.35) lollipop(b, x, y + 0.3, z, 0.55, rand)
+      else if (k < 0.7) candyCane(b, x, y + 0.3, z, 0.6)
+      else gumdrop(b, x, y + 0.2, z, 0.6, rand)
+    })
+  },
+  mushroom(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 6, rand, density, (x, y, z) => (rand() < 0.7 ? mushroom(b, x, y, z, 0.8 + rand() * 0.5) : giantMushroom(b, x, y + 0.3, z, 0.4, rand)))
+  },
+  volcano(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 8, rand, density, (x, y, z) => (rand() < 0.5 ? lavaPool(b, x, y + 0.4, z, 0.45) : rock(b, x, y + 0.3, z, 0.6, '#2a2427')))
+  },
+  swamp(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 8, rand, density, (x, y, z) => (rand() < 0.5 ? lilyPond(b, x, y + 0.45, z, 0.35, rand) : bush(b, x, y, z, 0.6, '#5fa83a')))
+  },
+  crystal(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 5, rand, density, (x, y, z) => crystal(b, x, y, z, 0.5 + rand() * 0.3, rand))
+  },
+  ocean(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 4, rand, density, (x, y, z) => (rand() < 0.55 ? coral(b, x, y + 0.3, z, 0.6, rand) : seaweed(b, x, y, z, 0.6, rand)))
+  },
+  neon(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 6, rand, density, (x, y, z) => neonPost(b, x, y, z, rand))
+  },
+  sky(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 8, rand, density, (x, y, z) => (rand() < 0.6 ? cloud(b, x, y + 1.2, z, 0.35, rand) : lampPost(b, x, y, z, '#ffd84a')))
+  },
+  rainbow(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 7, rand, density, (x, y, z) => rainbowPillar(b, x, y + 0.3, z, 0.4, rand))
+  },
+  moon(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 9, rand, density, (x, y, z) => (rand() < 0.6 ? crater(b, x, y + 0.35, z, 0.4) : moonBase(b, x, y + 0.3, z, 0.4, rand)))
+  },
+  aurora(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 7, rand, density, (x, y, z) => (rand() < 0.5 ? pine(b, x, y + 0.3, z, 0.45, rand, true) : iceCrystal(b, x, y, z, 0.55)))
+  },
+  space(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 6, rand, density, (x, y, z) => asteroid(b, x, y + 1.5 + rand() * 3, z, 0.5, rand))
+  },
+  cosmic(b, m0, m1, rand, density) {
+    alongEdges(m0, m1, 6, rand, density, (x, y, z) => orb(b, x, y + 1.5 + rand() * 2.5, z, 0.5, rand))
+  },
+}
+
+/** Party flags strung across the track every so often, in the stage's colours. */
+const BUNTING_EVERY = 90
+const BUNTING_FLAGS = 14
+
+function bunting(b, m, theme) {
+  if (!clearAt(m)) return
+  const z = zAt(m)
+  const y = surfaceY(z, 0) + 11
+  b.add(0, y + 0.45, z, HALF * 2 + 2, 0.08, 0.08, '#ffffff', STYLE.SMOOTH)
+  const colors = [theme.gate, '#ffffff', theme.name[1]]
+  for (let i = 0; i < BUNTING_FLAGS; i += 1) {
+    const x = -HALF + ((i + 0.5) / BUNTING_FLAGS) * HALF * 2
+    // A gentle sag in the middle of the string.
+    const sag = 0.6 * (1 - (x / HALF) ** 2)
+    b.add(x, y - sag, z, 0.9, 0.9, 0.1, colors[i % colors.length], STYLE.SMOOTH, 0, 0, Math.PI / 4)
+  }
+}
+
 /**
  * Builds chunk `index` (metres [index*CHUNK, (index+1)*CHUNK)).
  * @param {{ density?: number }} options 0-1 scenery density (quality and speed)
@@ -828,15 +993,25 @@ export function buildChunk(index, { density = 1 } = {}) {
 
   // Split the chunk at zone boundaries so each part gets its own colours and scenery.
   const cuts = [m0]
-  for (const zone of ZONES) if (zone.start > m0 && zone.start < m1) cuts.push(zone.start)
+  const stages = zones()
+  for (const zone of stages) if (zone.start > m0 && zone.start < m1) cuts.push(zone.start)
   cuts.push(m1)
 
   for (let i = 0; i < cuts.length - 1; i += 1) {
     const a = cuts[i]
     const c = cuts[i + 1]
-    const zone = ZONES[zoneIndexAt(a)]
-    canyon(b, a, c, ZONE_THEMES[zone.theme], wide)
+    const zone = stages[zoneIndexAt(a)]
+    const theme = ZONE_THEMES[zone.theme]
+    canyon(b, a, c, theme, wide)
     DECOR[zone.theme](b, a, c, rand, density)
+    // On LOW (thin scenery) the track's edges are sparser and the flags are left out,
+    // to keep phones well inside the triangle budget.
+    EDGES[zone.theme](b, a, c, rand, density < 0.5 ? density * 0.6 : density)
+    if (density >= 0.5) {
+      for (let m = Math.ceil((a - BUNTING_EVERY / 2) / BUNTING_EVERY) * BUNTING_EVERY + BUNTING_EVERY / 2; m < c; m += BUNTING_EVERY) {
+        if (m >= a && m >= DECOR_START) bunting(b, m, theme)
+      }
+    }
   }
 
   for (const lip of rampLips(m0, m1, _lips)) ramp(b, lip, themeAt(lip).gate)

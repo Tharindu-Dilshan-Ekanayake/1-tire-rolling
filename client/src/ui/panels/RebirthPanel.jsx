@@ -1,4 +1,4 @@
-import { levelCap, rebirthMultiplier } from '@shared/balance'
+import { levelCap, nextRebirthGift, rebirthMultiplier } from '@shared/balance'
 import { formatMultiplier } from '@shared/format'
 import { isMaxLevel, rebirthProgress, rebirthSkipPrice } from '@shared/logic'
 
@@ -52,6 +52,7 @@ export function RebirthPanel() {
   const canSkip = useGame((s) => s.profile.wins >= skipPrice)
   const autoRebirth = useGame((s) => s.profile.settings.autoRebirth)
   const cap = levelCap(rebirths)
+  const gift = nextRebirthGift(rebirths)
 
   const skip = () => {
     if (getGame().profile.wins < skipPrice) {
@@ -86,6 +87,14 @@ export function RebirthPanel() {
           Rebirth resets your Level and Health!
         </StrokeText>
       </p>
+      {gift && (
+        <p className="m-0 flex items-center justify-center" style={{ fontSize: u(40), marginTop: u(8), gap: u(10) }}>
+          <Icon name="egg:volcano" size={u(56)} />
+          <StrokeText stroke={u(8)} gradient={GRADIENTS.gold}>
+            {gift.rebirths === rebirths + 1 ? 'This rebirth' : `Rebirth ${gift.rebirths}`} gives {gift.label}!
+          </StrokeText>
+        </p>
+      )}
 
       <div
         className="relative mx-auto overflow-hidden"

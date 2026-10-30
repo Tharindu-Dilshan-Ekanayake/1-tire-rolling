@@ -226,6 +226,10 @@ function attachRoom(room, identity, Callbacks, endpoint, gen) {
         getGame().setLeaderboards(payload)
         break
       case 'ghostRoll':
+        // Never your own roll (your tire is drawn already), and only rolls down your
+        // world's track.
+        if (payload.sid === room.sessionId) break
+        if ((payload.world || 0) !== (getGame().profile.world || 0)) break
         runtime.ghostRolls.set(payload.sid, { ...payload, startedAt: performance.now() })
         break
       case 'kicked':

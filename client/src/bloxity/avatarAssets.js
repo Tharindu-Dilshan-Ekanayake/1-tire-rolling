@@ -8,7 +8,7 @@
  * `avatar.getEquipped()` returns:
  *   { hatId, backId, skinId, headId, armLId, armRId, legLId, legRId, torsoId,
  *     hairId, maskId, neckId, chestId, waistId, handId, shoesId,
- *     pantsId, shirtId, faceId }
+ *     pantsId, shirtId, faceId, characterId }
  */
 
 import { apiUrl, staticUrl } from './env'
@@ -71,6 +71,36 @@ export const assetUrls = {
   hatTexture: (id) => `${avatarCdn()}/textures/hats/${id}.png`,
   backMesh: (id) => `${avatarCdn()}/items/back/${id}.obj`,
   backTexture: (id) => `${avatarCdn()}/textures/back/${id}.png`,
+  /** neck, chest, waist, hand, shoes. */
+  accessoryMesh: (slot, id) => `${avatarCdn()}/items/${slot}/${id}.obj`,
+  accessoryTexture: (slot, id) => `${avatarCdn()}/textures/${slot}/${id}.png`,
+}
+
+/**
+ * Everything worn on a bone, by slot: which equipped id, where its mesh and texture
+ * live, and how it sits.
+ *   - hat, hair, mask: on Neck1 at (0, 0.8, 0), all three worn together.
+ *   - back: on Spine2 at its origin.
+ *   - neck, chest, waist: on their bone at `origin` in player.glb's model space.
+ *   - hand, shoes: a pair - the mesh on the left bone and a mirrored copy on the right,
+ *     following those bones' position and rotation only (see avatarRig.placeFollowers).
+ * `model` is where a head/back item sits in player.glb's model space, for custom
+ * characters (avatarRig.attachToCharacter).
+ */
+export const WORN_SLOTS = {
+  hat: { idKey: 'hatId', bone: HAT_BONE, local: [0, 0.8, 0], model: [0, 5.6, 0], mesh: assetUrls.hatMesh, texture: assetUrls.hatTexture },
+  hair: { idKey: 'hairId', bone: HAT_BONE, local: [0, 0.8, 0], model: [0, 5.6, 0], mesh: assetUrls.hatMesh, texture: assetUrls.hatTexture },
+  mask: { idKey: 'maskId', bone: HAT_BONE, local: [0, 0.8, 0], model: [0, 5.6, 0], mesh: assetUrls.hatMesh, texture: assetUrls.hatTexture },
+  back: { idKey: 'backId', bone: BACK_BONE, local: [0, 0, 0], model: [0, 4.2, 0], mesh: assetUrls.backMesh, texture: assetUrls.backTexture },
+  neck: { idKey: 'neckId', bone: 'Spine2', origin: [0, 4.8, 0] },
+  chest: { idKey: 'chestId', bone: 'Spine2', origin: [0, 3.6, 0] },
+  waist: { idKey: 'waistId', bone: 'Spine1', origin: [0, 2.4, 0] },
+  hand: { idKey: 'handId', bone: 'ArmL2_leaf', mirror: 'ArmR2_leaf', origin: [0, 0, 0] },
+  shoes: { idKey: 'shoesId', bone: 'LegL2_leaf', mirror: 'LegR2_leaf', origin: [0, 0, 0] },
+}
+for (const [slot, cfg] of Object.entries(WORN_SLOTS)) {
+  cfg.mesh ??= (id) => assetUrls.accessoryMesh(slot, id)
+  cfg.texture ??= (id) => assetUrls.accessoryTexture(slot, id)
 }
 
 /** Skin ids fall back to "0" rather than being skipped. */

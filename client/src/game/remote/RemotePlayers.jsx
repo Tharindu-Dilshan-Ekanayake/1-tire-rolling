@@ -6,7 +6,7 @@ import { remotePlayers } from '../../net/remotePlayers'
 import { getQuality } from '../../store/quality'
 import { createBoxInstances, disposeBlocks } from '../blocks'
 import { sharedMaterials, STYLE } from '../materials'
-import { PAD_TIRE_SIZE, padBounce, padTireTop } from '../padBounce'
+import { PAD_FLAT, PAD_TIRE_SIZE, padBounce, padTireTop } from '../padBounce'
 import { runtime } from '../runtime'
 import { createTireMesh, disposeTireMesh, tireWidth } from '../tire'
 import { hideNameplatesFrom, NAMEPLATE_POOL_SIZE, placeNameplate } from './nameplates'
@@ -185,9 +185,9 @@ export function RemotePlayers() {
       if (visible && running && trainers < MAX_REMOTES) {
         padBounce(t, bounce)
         const top = padTireTop(tireWidth(r.tireId))
-        lift = top * (1 - 0.22 * bounce.squash) + bounce.height
+        lift = top * (1 - 0.15 * bounce.squash) + bounce.height
         _v.set(r.position.x, r.position.y + top / 2, r.position.z)
-        _s.set(PAD_TIRE_SIZE * tireWidth(r.tireId) * (1 - 0.22 * bounce.squash), PAD_TIRE_SIZE * (1 + 0.06 * bounce.squash), PAD_TIRE_SIZE)
+        _s.set(PAD_TIRE_SIZE * PAD_FLAT * tireWidth(r.tireId) * (1 - 0.3 * bounce.squash), PAD_TIRE_SIZE * (1 + 0.06 * bounce.squash), PAD_TIRE_SIZE)
         tires.setMatrixAt(trainers, _m.compose(_v, LIE_FLAT, _s))
         tires.setStyle(trainers, r.tireId)
         trainers += 1

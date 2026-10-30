@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 
-import { PADS, SHOP, TIRES, WORLD_PORTALS } from '@shared/balance'
+import { PADS, SHOP, TIRES, WORLD_PORTALS, WORLDS } from '@shared/balance'
 import { formatNumber } from '@shared/format'
 import { isPadUnlocked } from '@shared/logic'
 
@@ -25,11 +25,15 @@ function usePrompt() {
   const atSphinx = useGame((s) => s.zone.sphinx)
   const atPortal = useGame((s) => s.zone.portal)
   const wins = useGame((s) => s.profile.wins)
+  const inWorld = useGame((s) => s.profile.world)
+  const unlocked = useGame((s) => s.profile.world2Unlocked)
 
+  // Walking into the portal takes you through (ticker.js); this says where to.
   if (atPortal) {
     const world = WORLD_PORTALS[atPortal]
-    return wins >= world.wins
-      ? { title: world.name, action: 'Coming soon!', run: null }
+    if (inWorld === 1) return { title: WORLDS[0].name, action: 'Step out and back in to go home', run: null }
+    return unlocked || wins >= world.wins
+      ? { title: world.name, action: `x${WORLDS[1].wins} Wins on every roll!`, run: null }
       : { title: world.name, action: `Needs ${formatNumber(world.wins)} Wins (you have ${formatNumber(wins)})`, run: null }
   }
 

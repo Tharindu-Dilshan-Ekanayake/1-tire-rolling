@@ -44,7 +44,7 @@ function RemoteAvatar({ sessionId, look }) {
     group.quaternion.setFromAxisAngle(_up, running ? PAD_YAW : r.yaw)
     if (running) {
       padBounce(_state.clock.elapsedTime, bounce)
-      group.position.y += padTireTop(tireWidth(r.tireId)) * (1 - 0.22 * bounce.squash) + bounce.height
+      group.position.y += padTireTop(tireWidth(r.tireId)) * (1 - 0.15 * bounce.squash) + bounce.height
     }
 
     const speed = running ? 0 : r.speed
@@ -71,8 +71,9 @@ function RemoteAvatar({ sessionId, look }) {
 /**
  * The other players nearest the camera, as their real avatars - standing, walking or
  * training: as many as the quality preset allows (`remoteAvatars`), within
- * `remoteAvatarDistance`. Anyone further is the cheap blocky figure RemotePlayers draws
- * (`r.fullAvatar` tells it who's covered); far enough away that it's only a few pixels.
+ * `remoteAvatarDistance` - on every preset, everyone in the room, near or far. Anyone
+ * beyond those limits would be the cheap blocky figure RemotePlayers draws
+ * (`r.fullAvatar` tells it who's covered).
  * Chosen twice a second, never per frame, so React only re-renders when the set of
  * players (or an outfit) actually changes.
  */

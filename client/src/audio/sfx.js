@@ -328,14 +328,33 @@ export const sfx = {
    * The tire smashing through a wooden wall: a crunch of splintering noise over a low
    * thump, then a few high clattering clicks of falling planks (~0.4 s).
    */
-  wallSmash() {
+  wallSmash(combo = 1) {
     if (!ready('wallSmash', 120)) return
-    tone(95, { duration: 0.22, volume: 0.2, slideTo: 45 })
-    noise({ duration: 0.18, volume: 0.32, from: 3200, to: 700, q: 0.7 })
-    noise({ duration: 0.3, volume: 0.12, from: 900, to: 260, q: 1.1 })
-    for (let i = 0; i < 4; i += 1) {
-      tone(1700 + Math.random() * 1600, { type: 'square', at: 0.1 + i * 0.065 + Math.random() * 0.02, duration: 0.03, volume: 0.04 })
+    // The hit: a deep boom and a sharp wooden crack.
+    tone(95, { duration: 0.26, volume: 0.24, slideTo: 40 })
+    noise({ duration: 0.08, volume: 0.4, from: 5200, to: 1800, q: 0.6 })
+    noise({ duration: 0.22, volume: 0.32, from: 3200, to: 700, q: 0.7 })
+    noise({ duration: 0.4, volume: 0.12, from: 900, to: 260, q: 1.1 })
+    // The pieces raining down: a clatter of little wooden clicks.
+    for (let i = 0; i < 9; i += 1) {
+      tone(1200 + Math.random() * 2200, { type: 'square', at: 0.08 + i * 0.045 + Math.random() * 0.03, duration: 0.025, volume: 0.035 })
     }
+    // A bright 'ding' that climbs with every wall smashed in a row: the combo.
+    const step = Math.min(combo - 1, 10)
+    const f = 523 * Math.pow(2, (step * 2) / 12)
+    tone(f, { type: 'triangle', at: 0.04, duration: 0.18, volume: 0.09, echo: true })
+    tone(f * 1.5, { type: 'triangle', at: 0.1, duration: 0.22, volume: 0.06, echo: true })
+  },
+  /** A new stage reached mid-roll: a quick, cheerful rising jingle. */
+  stageUp() {
+    if (!ready('stageUp', 300)) return
+    ;[659, 784, 988, 1319].forEach((f, i) => tone(f, { type: 'triangle', at: i * 0.06, duration: 0.16, volume: 0.08, echo: true }))
+    for (let i = 0; i < 3; i += 1) bell(1760 + Math.random() * 900, { at: 0.24 + i * 0.05, volume: 0.03, decay: 0.18 })
+  },
+  /** Trophies landing in the Wins counter: little coin pings, one after another. */
+  coins(count = 8) {
+    if (!ready('coins', 400)) return
+    for (let i = 0; i < count; i += 1) bell(1900 + (i % 4) * 230, { at: 0.55 + i * 0.07, volume: 0.04, decay: 0.12 })
   },
   /** The tire hitting a wall it can't break: a dull, heavy thud and a short low boing (~0.35 s). */
   wallBlock() {

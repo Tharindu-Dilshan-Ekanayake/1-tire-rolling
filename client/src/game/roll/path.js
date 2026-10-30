@@ -67,8 +67,8 @@ export const weaveX = (m) => Math.sin(m * 0.011) * 4 + Math.sin(m * 0.0037 + 1.3
 /** How thick the wooden walls between zones are (track.js builds them). */
 export const WALL_THICK = 1.2
 
-/** Radius of a rolling tire in the world: a big tire, more than twice as tall as a player. */
-export const TIRE_SIZE = 2
+/** Radius of a rolling tire in the world: a big, chunky toy tire, nearly twice as tall as a player. */
+export const TIRE_SIZE = 1.6
 
 const clamp01 = (x) => Math.min(1, Math.max(0, x))
 const smooth = (a, b, x) => {
@@ -161,8 +161,22 @@ function timeAtMeter(m, t, from, to, duration, crash) {
 export const PUSH_AHEAD = 3.6
 /** A tire that hits a wall it can't break stops dead and shatters this long before the roll's end. */
 const BOUNCE_TIME = 0.5
-/** Once stopped, the tire wobbles and falls over onto its side. */
-const TOPPLE_TIME = 0.7
+/**
+ * Once stopped, the tire wobbles and falls over onto its side like a coin settling:
+ * leaning further and further while it swings round, then landing flat with a little
+ * bounce. Over TOPPLE_TIME; it lands TOPPLE_LAND of the way through.
+ */
+const TOPPLE_TIME = 1.1
+export const TOPPLE_LAND = 0.7
+/**
+ * The falling starts before it stops: over the last TIP_TIME seconds of the ride it
+ * wobbles harder and harder, leans over to TIP_LEAN of the way down and curves off
+ * that way (TIP_VEER metres, TIP_YAW radians round), like a coin running out of speed.
+ */
+const TIP_TIME = 1.6
+const TIP_LEAN = 0.5
+const TIP_VEER = 1.6
+const TIP_YAW = 0.7
 
 /** A fresh state for rideState to write into. */
 export const createRideState = () => ({
@@ -178,6 +192,8 @@ export const createRideState = () => ({
   lean: 0,
   /** 0-1: falling over onto its side once stopped. */
   topple: 0,
+  /** Turn about the vertical as it falls over (radians). */
+  yaw: 0,
   /** True once the tire has hit a wall it can't break. */
   crashed: false,
   x: 0,
@@ -210,6 +226,8 @@ export function rideState(elapsed, ride, lane, out) {
   let speed = 0
   let air = 0
   let lean = 0
+  let yaw = 0
+  let veer = 0
   out.airborne = false
   out.crashed = false
   out.topple = 0
@@ -236,47 +254,71 @@ export function rideState(elapsed, ride, lane, out) {
       const turn = weaveX(meter + 1) - weaveX(meter)
       lean = Math.max(-0.25, Math.min(0.25, turn * 4))
     } else {
-      // Slammed into a wall too strong for it: stopped dead against it, in pieces
-      // (Walls.jsx throws them).
+      // At rest: where it stopped - or, slammed into a wall too strong for it, dead
+      // against it, in pieces (Walls.jsx throws them).
       meter = impact
-      out.crashed = true
+      out.crashed = crash
     }
     if (out.phase === 'stopped' && crash) {
       out.crashed = true
     } else if (out.phase === 'stopped') {
-      // Wobbling, then flat on its side.
+      // Over the rest of the way: swinging round like a coin, then flat on its side
+      // with a little bounce.
       const k = clamp01((t - rideTime) / TOPPLE_TIME)
-      out.topple = k * k
-      const wobble = Math.sin(k * 14) * 0.12 * (1 - k)
-      lean = toppleSide(ride.distance) * (Math.PI / 2) * out.topple + wobble
+      const side = toppleSide(ride.distance)
+      if (k < TOPPLE_LAND) {
+        const f = k / TOPPLE_LAND
+        out.topple = TIP_LEAN + (1 - TIP_LEAN) * f * f
+      } else {
+        const b = (k - TOPPLE_LAND) / (1 - TOPPLE_LAND)
+        out.topple = 1 - 0.07 * Math.sin(b * Math.PI) * (1 - b * 0.5)
+      }
+      const wobble = Math.sin(k * 20) * 0.08 * (1 - Math.min(1, k / TOPPLE_LAND))
+      lean = side * (Math.PI / 2) * out.topple + wobble
+      yaw = side * (TIP_YAW + 1.1 * (1 - Math.pow(1 - Math.min(1, k / TOPPLE_LAND), 2)))
+      veer = side * TIP_VEER
     } else if (!crash) {
-      // Slowing to a stop: the last second wobbles as it loses speed.
-      const slow = smooth(rideTime - 1, rideTime, t)
-      lean += Math.sin(t * 9) * 0.1 * slow
+      // Running out of speed: wobbling harder and harder, leaning over and curving off
+      // to the side it'll fall to - already half down when it stops.
+      const side = toppleSide(ride.distance)
+      const tip = smooth(rideTime - TIP_TIME, rideTime, t)
+      const tip2 = tip * tip
+      out.topple = TIP_LEAN * tip2
+      lean += side * (Math.PI / 2) * out.topple + Math.sin(t * 11) * 0.14 * tip * (1 - tip2 * 0.6)
+      yaw = side * TIP_YAW * tip2
+      veer = side * TIP_VEER * tip2 * tip
     }
   }
   // Ease from where it set off onto the weaving line.
   const settle = clamp01((meter - start) / 40)
-  const x = ride.startX * (1 - settle) + (weaveX(meter) + lane) * settle
+  const x = ride.startX * (1 - settle) + (weaveX(meter) + lane) * settle + veer
   out.meter = meter
   out.speed = speed
   out.air = air
   out.lean = lean
+  out.yaw = yaw
   out.spin = -(meter - start) / TIRE_SIZE
   out.x = x
   // Lying down, its centre sinks to half its width off the floor.
-  const height = TIRE_SIZE + (TIRE_SIZE * 0.32 - TIRE_SIZE) * out.topple
+  const height = TIRE_SIZE + (TIRE_SIZE * 0.5 - TIRE_SIZE) * out.topple
   trackPoint(meter, x, height + air, out.position)
   return out
 }
 
 const _ax = new Vector3(1, 0, 0)
+const _ay = new Vector3(0, 1, 0)
 const _az = new Vector3(0, 0, 1)
 const _qa = new Quaternion()
 const _qb = new Quaternion()
+const _qc = new Quaternion()
 
-/** The tire's turn for ride state `st`: leaning about the track, spinning about its axle. */
+/**
+ * The tire's turn for ride state `st`: swinging round as it falls over, leaning about
+ * the track, spinning about its axle.
+ */
 export function rideTurn(st, out) {
-  // Lean about the direction of travel (Z), then the roll about the axle (X).
-  return out.multiplyQuaternions(_qa.setFromAxisAngle(_az, st.lean), _qb.setFromAxisAngle(_ax, st.spin))
+  // Turn about the vertical (Y), lean about the direction of travel (Z), then the roll
+  // about the axle (X).
+  _qc.setFromAxisAngle(_ay, st.yaw || 0)
+  return out.multiplyQuaternions(_qc, _qa.setFromAxisAngle(_az, st.lean)).multiply(_qb.setFromAxisAngle(_ax, st.spin))
 }

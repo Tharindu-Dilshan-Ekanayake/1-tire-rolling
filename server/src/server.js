@@ -8,6 +8,7 @@ import { bloxity } from './bloxityEnv.js'
 import { startBloxityLeaderboards } from './bloxityLeaderboards.js'
 import { closeStorage, openStorage } from './db.js'
 import { gemsWebhook, startGemsPoller } from './gems.js'
+import { installRoomReporter } from './legionRoomReporter.js'
 import { startLeaderboards } from './leaderboards.js'
 import { activePlayers } from './registry.js'
 import { GameRoom } from './rooms/GameRoom.js'
@@ -88,7 +89,8 @@ server.onShutdown(() => {
 })
 
 await server.listen(PORT)
-stopTimers.push(startLeaderboards(), startBloxityLeaderboards(), startGemsPoller())
+// After listen: Boxity's "Open Rooms" list, fed from this pod (legionRoomReporter.js).
+stopTimers.push(startLeaderboards(), startBloxityLeaderboards(), startGemsPoller(), installRoomReporter())
 console.log(
   `[server] listening on port ${PORT} (Boxity ${bloxity.env}, ${bloxity.apiUrl})` +
     `${process.env.POD_NAME ? ` (${process.env.POD_NAME}, ${process.env.BLOXITY_CHANNEL})` : ''}`,

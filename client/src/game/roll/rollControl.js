@@ -1,4 +1,4 @@
-import { ROLL_LAUNCH, ZONES } from '@shared/balance'
+import { ROLL_LAUNCH } from '@shared/balance'
 import { formatNumber } from '@shared/format'
 import { ROLL_RETURN } from '@shared/world'
 
@@ -7,10 +7,14 @@ import { getGame } from '../../store/game'
 import { fadeThrough } from '../../ui/fade'
 import { burst } from '../fx/fxQueue'
 import { runtime } from '../runtime'
+import { zones } from '../worldLook'
 import { createRideState, meterAtZ, rideState } from './path'
 
-/** How long the "+N Wins" result shows over your stopped tire before you're back. */
-const RESULT_HOLD_MS = 2000
+/**
+ * How long the "+N Wins" result shows over your stopped tire before you're back: long
+ * enough to watch it wobble over onto its side (path.js, TOPPLE_TIME).
+ */
+const RESULT_HOLD_MS = 2600
 /** The skid sound starts this long before a normal stop. */
 const SKID_SOUND_LEAD = 0.9
 
@@ -50,7 +54,20 @@ export const roll = {
   tookOffAt: 0,
   hitAt: 0,
   frameKey: -1,
+  /**
+   * Slow motion: ms the roll's clock is behind real time. Every wall smashed slows the
+   * tire (and the camera on it) for a moment, so you see the planks burst; the clock
+   * catches up again a little faster than real time afterwards, and is always caught up
+   * before the tire stops, so the roll ends exactly when the authority said.
+   */
+  lag: 0,
+  lastNow: 0,
 }
+
+/** How long each smash's slow motion lasts, how slow, and how fast the clock catches up. */
+const SLOW_MS = 220
+const SLOW_RATE = 0.25
+const CATCH_UP = 0.4
 
 let timers = []
 
@@ -70,7 +87,15 @@ export function advanceRoll(clockTime) {
   const now = performance.now()
   const wasAirborne = roll.airborne
   const wasCrashed = roll.crashed
-  rideState((now - roll.startedAt) / 1000, roll, 0, roll)
+  const wasToppled = roll.topple
+  const dt = roll.lastNow ? Math.min(now - roll.lastNow, 100) : 0
+  roll.lastNow = now
+  if (now - roll.hitAt < SLOW_MS && !roll.crashed) roll.lag += dt * (1 - SLOW_RATE)
+  else roll.lag = Math.max(0, roll.lag - dt * CATCH_UP)
+  // All caught up by half a second before the stop.
+  const left = roll.duration - (now - roll.startedAt) / 1000
+  roll.lag = Math.min(roll.lag, Math.max(0, left - 0.5) * 400)
+  rideState((now - roll.startedAt - roll.lag) / 1000, roll, 0, roll)
   if (!wasAirborne && roll.airborne) {
     roll.tookOffAt = now
     sfx.jumpWhoosh()
@@ -78,6 +103,8 @@ export function advanceRoll(clockTime) {
     roll.landedAt = now
     sfx.tireLand()
   }
+  // Flat on its side after the wobble: a thud.
+  if (wasToppled < 0.9 && roll.topple >= 0.9 && !roll.crashed) sfx.tireLand()
   if (!wasCrashed && roll.crashed) {
     roll.hitAt = now
     sfx.wallBlock()
@@ -109,6 +136,8 @@ export function beginRoll(result) {
     tookOffAt: 0,
     hitAt: 0,
     frameKey: -1,
+    lag: 0,
+    lastNow: 0,
   })
   rideState(0, roll, 0, roll)
   runtime.player.frozen = true
@@ -134,8 +163,9 @@ export function beginRoll(result) {
       burst({ x: f.x, y: f.y + 1.8, z: f.z, count: 50, palette: 'gold', speed: 9 })
       game.endRoll()
       // A zone reached for the first time ever: its name and the prize, once.
+      const stages = zones()
       for (const zi of roll.discovered) {
-        game.showToast(`NEW ZONE: ${ZONES[zi].name}! +${formatNumber(ZONES[zi].discover)} Wins`)
+        game.showToast(`NEW ZONE: ${stages[zi].name}! +${formatNumber(stages[zi].discover)} Wins`)
       }
       timers.push(setTimeout(() => fadeThrough(finishRoll), RESULT_HOLD_MS))
     }, result.duration * 1000),

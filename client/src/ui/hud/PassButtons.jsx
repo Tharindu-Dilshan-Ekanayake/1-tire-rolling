@@ -44,7 +44,7 @@ function PassButton({ product, label, icon, gradient }) {
 /** The x2 Health, x2 Wins and Auto Roll passes down the right-hand side, as in the reference. */
 export function PassButtons() {
   return (
-    <div className="pointer-events-none absolute flex flex-col" style={{ right: u(24), top: '34%', gap: u(26) }}>
+    <div className="hud-passes pointer-events-none absolute flex flex-col" style={{ gap: u(26) }}>
       {PASSES.map((pass) => (
         <PassButton key={pass.product} {...pass} />
       ))}

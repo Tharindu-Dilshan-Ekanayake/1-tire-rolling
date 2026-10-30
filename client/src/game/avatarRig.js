@@ -2,6 +2,7 @@ import {
   Box3,
   BufferAttribute,
   BufferGeometry,
+  DoubleSide,
   Euler,
   Matrix4,
   MeshLambertMaterial,
@@ -13,7 +14,7 @@ import {
 } from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 
-import { BACK_BONE, HAT_BONE, NECK_OFFSET_BONE, PART_SLOTS } from '../bloxity/avatarAssets'
+import { BACK_BONE, HAT_BONE, NECK_OFFSET_BONE, PART_SLOTS, WORN_SLOTS } from '../bloxity/avatarAssets'
 import { computePose, POSED_BONES } from './playerPose'
 
 /**
@@ -66,6 +67,10 @@ export function collectRig(root) {
     handBone: null,
     handPoint: null,
     handRestInv: null,
+    /** bone name -> inverse of its rest transform in model space (see restInverses). */
+    restInverse: {},
+    /** Pairs worn on hands and feet, placed every frame (placeFollowers). */
+    followers: [],
   }
 
   const meshBySlot = new Map(
@@ -130,13 +135,22 @@ export function collectRig(root) {
       entry.axisY = new Vector3(0, 1, 0).applyQuaternion(relInv).normalize()
     }
 
+    rig.restInverse = restInverses(root)
+
     // The palm: the bottom of the right arm mesh, a little up from its end, found in
-    // the bind pose and kept in the forearm bone's frame so it follows the arm.
+    // the bind pose and kept in the forearm bone's frame so it follows the arm. (A
+    // custom character has no such mesh: its wrist bone then.)
     const handBone = skeleton.bones.find((b) => b.name === HAND_BONE)
     const arm = rig.partMeshes.arm_R
-    if (handBone && arm) {
-      const box = new Box3().setFromObject(arm)
-      const palm = new Vector3((box.min.x + box.max.x) / 2, box.min.y + (box.max.y - box.min.y) * 0.06, (box.min.z + box.max.z) / 2)
+    const wrist = skeleton.bones.find((b) => b.name === 'ArmR2_leaf')
+    if (handBone && (arm || wrist)) {
+      let palm
+      if (arm) {
+        const box = new Box3().setFromObject(arm)
+        palm = new Vector3((box.min.x + box.max.x) / 2, box.min.y + (box.max.y - box.min.y) * 0.06, (box.min.z + box.max.z) / 2)
+      } else {
+        palm = wrist.getWorldPosition(new Vector3())
+      }
       rig.handBone = handBone
       rig.handPoint = handBone.worldToLocal(palm)
       rig.handRestInv = rootQuatInv.clone().multiply(handBone.getWorldQuaternion(new Quaternion())).invert()
@@ -153,6 +167,23 @@ export function collectRig(root) {
   }
 
   return rig
+}
+
+/**
+ * For every bone, the inverse of its rest transform in the model's own space:
+ * inverse(inverse(model.matrixWorld) * bone.matrixWorld). Call straight after the GLB
+ * loads, before any pose or proportions. Accessories are placed from these, not from
+ * skeleton.boneInverses - player.glb's leaf bones bind 90 degrees off their rest pose,
+ * which would turn hand items sideways.
+ */
+export function restInverses(model) {
+  model.updateMatrixWorld(true)
+  const modelInv = new Matrix4().copy(model.matrixWorld).invert()
+  const out = {}
+  model.traverse((node) => {
+    if (node.isBone) out[node.name] = new Matrix4().multiplyMatrices(modelInv, node.matrixWorld).invert()
+  })
+  return out
 }
 
 /**
@@ -319,23 +350,137 @@ export function disposeMergedBody(body) {
   body.material.dispose()
 }
 
-/**
- * Attaches a hat or back accessory to its bone.
- * Offsets are the SDK's own: hats sit at y=0.8 on `Neck1`, back items at the origin
- * of `Spine2`.
- */
-export function attachAccessory(rig, kind, object) {
-  const bone = kind === 'hat' ? rig.hatBone : rig.backBone
-  if (!object || !bone) return null
+const _origin = new Matrix4()
+const _mirror = new Matrix4().makeScale(-1, 1, 1)
 
-  object.scale.setScalar(1)
-  object.position.set(0, kind === 'hat' ? 0.8 : 0, 0)
+function prepare(object) {
   object.traverse((child) => {
     if (child.isMesh) child.castShadow = true
   })
-
-  bone.add(object)
+  object.matrixAutoUpdate = false
   return object
+}
+
+/** Places `object` under `parent` with a fixed local matrix. */
+function fixUnder(parent, object, local) {
+  prepare(object)
+  object.matrix.copy(local)
+  object.matrixWorldNeedsUpdate = true
+  parent.add(object)
+  return object
+}
+
+/** Mirrors a copy of a hand/shoe mesh across x (and turns its faces back outwards). */
+function mirrored(object) {
+  const copy = object.clone(true)
+  copy.traverse((child) => {
+    if (child.isMesh) {
+      child.material = child.material.clone()
+      child.material.side = DoubleSide
+    }
+  })
+  return copy
+}
+
+/**
+ * Wears `object` (already textured) in `slot` (WORN_SLOTS) on a player.glb avatar.
+ * Head and back items sit at the SDK's offsets on their bone; neck, chest and waist at
+ * restInverse(bone) * translate(origin), so they follow the bone (shoulder width and
+ * torso scale move the bones, so they follow those too); hands and shoes go on as a
+ * pair that follows the bones' position and rotation only. Returns everything added.
+ */
+export function attachAccessory(rig, slot, object) {
+  const cfg = WORN_SLOTS[slot]
+  if (!cfg || !object) return []
+  const bone = rig.bones[cfg.bone]?.bone
+  if (!bone) return []
+  if (cfg.local) return [fixUnder(bone, object, _origin.makeTranslation(...cfg.local))]
+  const rest = rig.restInverse[cfg.bone]
+  if (!rest) return []
+  const local = new Matrix4().copy(rest).multiply(_origin.makeTranslation(...cfg.origin))
+  if (!cfg.mirror) return [fixUnder(bone, object, local)]
+  return wearPair(rig, cfg, object, local, new Matrix4().copy(rig.restInverse[cfg.mirror] ?? rest).multiply(_mirror).multiply(_origin.makeTranslation(...cfg.origin)))
+}
+
+function wearPair(rig, cfg, object, localL, localR) {
+  const holder = rig.root.parent ?? rig.root
+  const out = []
+  for (const [boneName, item, local] of [
+    [cfg.bone, object, localL],
+    [cfg.mirror, mirrored(object), localR],
+  ]) {
+    const bone = rig.bones[boneName]?.bone
+    if (!bone) continue
+    prepare(item)
+    holder.add(item)
+    rig.followers.push({ object: item, bone, local })
+    out.push(item)
+  }
+  return out
+}
+
+/**
+ * A custom character (the player's own uploaded one, see PlayerAvatar) wearing `object`
+ * in `slot`. `character` is the SDK's description ({ rig: { anchors, ... } }) and
+ * `baseRestInverse` player.glb's rest inverses: the items keep their player.glb
+ * placement, fitted to the character.
+ *   - head, back, neck, chest, waist: local = M * placement in player.glb model space,
+ *     M from the SDK's characterAccessoryMatrix(character, bone) (or, for an older
+ *     character without one, scale(anchor) * the usual local).
+ *   - hands, shoes: scale(anchor) * restInverse(player.glb bone) * translate(origin).
+ */
+export function attachToCharacter(rig, slot, object, character, baseRestInverse, accessoryMatrix) {
+  const cfg = WORN_SLOTS[slot]
+  if (!cfg || !object) return []
+  const bone = rig.bones[cfg.bone]?.bone
+  if (!bone) return []
+  const anchor = (name) => {
+    const a = character?.rig?.anchors?.[name]
+    const s = Array.isArray(a) ? a : Number.isFinite(a) ? [a, a, a] : [1, 1, 1]
+    return new Matrix4().makeScale(s[0] ?? 1, s[1] ?? 1, s[2] ?? 1)
+  }
+  const origin = cfg.origin ?? [0, 0, 0]
+  if (cfg.mirror) {
+    const restL = baseRestInverse[cfg.bone]
+    const restR = baseRestInverse[cfg.mirror] ?? restL
+    if (!restL) return []
+    const localL = anchor(cfg.bone).multiply(restL).multiply(_origin.makeTranslation(...origin))
+    const localR = anchor(cfg.mirror).multiply(restR).multiply(_mirror).multiply(_origin.makeTranslation(...origin))
+    return wearPair(rig, cfg, object, localL, localR)
+  }
+  const placement = new Matrix4().makeTranslation(...(cfg.model ?? origin))
+  const m = accessoryMatrix?.(character, cfg.bone)
+  if (Array.isArray(m) && m.length === 16) return [fixUnder(bone, object, new Matrix4().fromArray(m).multiply(placement))]
+  // Older character: the anchor's scale on the usual local.
+  const usual = cfg.local ? new Matrix4().makeTranslation(...cfg.local) : new Matrix4().copy(baseRestInverse[cfg.bone] ?? new Matrix4()).multiply(_origin.makeTranslation(...origin))
+  return [fixUnder(bone, object, anchor(cfg.bone).multiply(usual))]
+}
+
+const _fp = new Vector3()
+const _fq = new Quaternion()
+const _fs = new Vector3()
+const _one = new Vector3(1, 1, 1)
+const _holderInv = new Matrix4()
+const _fm = new Matrix4()
+
+/**
+ * Hands and shoes: each frame, compose(bone position, bone rotation, scale 1) * local,
+ * in the space of the object holding them - so they ride the limb without being
+ * stretched by arm length or height. Run after the pose.
+ */
+export function placeFollowers(rig) {
+  const followers = rig.followers
+  if (followers.length === 0) return
+  const holder = followers[0].object.parent
+  if (!holder) return
+  holder.updateWorldMatrix(true, false)
+  _holderInv.copy(holder.matrixWorld).invert()
+  for (const f of followers) {
+    f.bone.updateWorldMatrix(true, false)
+    _fm.multiplyMatrices(_holderInv, f.bone.matrixWorld).decompose(_fp, _fq, _fs)
+    f.object.matrix.compose(_fp, _fq, _one).multiply(f.local)
+    f.object.matrixWorldNeedsUpdate = true
+  }
 }
 
 /**

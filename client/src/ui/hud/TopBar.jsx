@@ -27,7 +27,7 @@ function SoundButton() {
 }
 
 /**
- * The top-right corner: sound, daily rewards, leaderboards and your name tag. The
+ * The top-right corner: sound, daily rewards, leaderboards, settings and your name tag. The
  * top-left is deliberately left clear for the game's logo.
  */
 export function TopBar() {
@@ -42,6 +42,7 @@ export function TopBar() {
       <SoundButton />
       <RoundButton icon="calendar" label="Daily Rewards" alert={dailyReady} onClick={() => openPanel('daily')} />
       <RoundButton icon="star" label="Leaderboards" onClick={() => openPanel('leaderboards')} iconSize={34} />
+      <RoundButton icon="settings" label="Settings" onClick={() => openPanel('settings')} iconSize={42} />
       <AuthHUD />
     </div>
   )

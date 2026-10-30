@@ -17,32 +17,34 @@ import {
   Vector3,
 } from 'three'
 
-import { ROLL_RECOVERY, TROPHY_FIRST, TROPHY_SPACING, ZONES } from '@shared/balance'
+import { ROLL_RECOVERY, TROPHY_FIRST, TROPHY_SPACING } from '@shared/balance'
 import { formatNumber } from '@shared/format'
 import { trophyValue, winsMultiplier, zoneIndexAt } from '@shared/logic'
 import { mulberry32 } from '@shared/rng'
 import { CANYON_HALF_WIDTH } from '@shared/world'
 
 import { sfx } from '../../audio/sfx'
+import { burst } from '../fx/fxQueue'
 import { getGame, useGame } from '../../store/game'
 import { getQuality, useQuality } from '../../store/quality'
 import { iconUrl } from '../../ui/icons'
 import { BlockSet, createToyInstances, disposeBlocks, PropBuilder } from '../blocks'
 import { spawnScattered } from '../fx/popups'
-import { createGlowInstances, disposeGlow } from '../glow'
 import { LabelBatch } from '../labels/LabelBatch'
 import { sharedMaterials, STYLE } from '../materials'
 import { runtime } from '../runtime'
-import { FOG, SKY } from '../sceneStyle'
 import { skyUniforms } from '../skyState'
+import { activeWorld, perWorld, showLobbySky, zones } from '../worldLook'
 import { createTireMesh, disposeTireMesh, tireGlow, tireMatrix } from '../tire'
-import { writeDistance, writeZone } from './hudLink'
+import { writeDistance, writeSpeed, writeZone } from './hudLink'
 import { createRideState, meterAtZ, rideState, rideTurn, slopeBoxMatrix, surfaceY, TIRE_SIZE, trackPoint, weaveX, zAt } from './path'
 import RollFX from './RollFX'
 import { advanceRoll, roll } from './rollControl'
 import SpeedBlur from './SpeedBlur'
-import { buildChunk, CHUNK, GATE_BEAM_H, GATE_BEAM_Y, RIM_X, WALL_H, WALL_RUN, WALLS, ZONE_THEMES } from './track'
+import TireTrail from './TireTrail'
+import { buildChunk, CHUNK, GATE_BEAM_H, GATE_BEAM_Y, RIM_X, WALL_H, WALL_RUN, walls, ZONE_THEMES } from './track'
 import Walls from './Walls'
+import Weather from './Weather'
 
 /**
  * Above this speed (m/s) the roll goes to "warp": no new scenery is built, a plain
@@ -50,8 +52,8 @@ import Walls from './Walls'
  * where you'll stop are prepared. Streaming real chunks at thousands of m/s would cost
  * more CPU than a phone has, for scenery nobody could see.
  */
-const WARP_ON = 220
-const WARP_OFF = 160
+const WARP_ON = 700
+const WARP_OFF = 500
 /** Length of the warp canyon, centred a little ahead of the rider. */
 const WARP_LENGTH = 1400
 /** Builder passes between prefetch builds while in warp (~1 chunk per 120 ms). */
@@ -61,17 +63,19 @@ const HALF = CANYON_HALF_WIDTH
 const LEAN = Math.atan2(WALL_RUN, WALL_H)
 
 /** Warp-canyon colours and styles per zone, parsed once. */
-const WARP_THEMES = ZONES.map((z) => {
-  const t = ZONE_THEMES[z.theme]
-  return {
+const warpThemes = perWorld((zs) =>
+  zs.map((z) => {
+    const t = ZONE_THEMES[z.theme]
+    return {
     floor: new Color(t.floor),
     wall: new Color(t.wall),
     ledge: new Color(t.ledge),
     floorStyle: t.floorStyle ?? STYLE.STUDS,
     wallStyle: t.wallStyle ?? STYLE.STUDS,
     ledgeStyle: t.ledgeStyle ?? STYLE.STUDS,
-  }
-})
+    }
+  }),
+)
 const STYLE_KEYS = { floor: 'floorStyle', wall: 'wallStyle', ledge: 'ledgeStyle' }
 /** The warp canyon's boxes, in track terms: [x, h, width, thick, lean, part]. */
 const WARP_PARTS = [
@@ -122,7 +126,6 @@ const _up = new Vector3(0, 1, 0)
 /** Stable vector for runtime.flightFocus (the scratch ones are reused mid-frame). */
 const tireFocus = new Vector3()
 const _turn = new Quaternion()
-const _glowM = new Matrix4()
 const _skyTop = new Color()
 const _skyHorizon = new Color()
 
@@ -216,15 +219,17 @@ const streakFragmentShader = /* glsl */ `
   }
 `
 
-const ZONE_SKIES = ZONES.map((z) => ZONE_THEMES[z.theme].sky.map((c) => new Color(c)))
-const ZONE_NAME_GRADIENTS = ZONES.map((z) => {
-  const [a, b, c] = ZONE_THEMES[z.theme].name
-  return `linear-gradient(180deg, ${a} 0%, ${b} 45%, ${c} 100%)`
-})
+const zoneSkies = perWorld((zs) => zs.map((z) => ZONE_THEMES[z.theme].sky.map((c) => new Color(c))))
+const zoneNameGradients = perWorld((zs) =>
+  zs.map((z) => {
+    const [a, b, c] = ZONE_THEMES[z.theme].name
+    return `linear-gradient(180deg, ${a} 0%, ${b} 45%, ${c} 100%)`
+  }),
+)
+/** How far in front of its gate's board a stage sign floats (see the gate signs). */
+const GATE_SIGN_AHEAD = 4.5
 /** Stage themes under a night sky full of stars. */
 const STARRY = new Set(['moon', 'space', 'cosmic'])
-const DEFAULT_TOP = new Color(SKY.top)
-const DEFAULT_HORIZON = new Color(SKY.horizon)
 
 const smoothstep = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
@@ -284,20 +289,42 @@ function releaseGhosts() {
  * Writes tire instance `n` (and its halo) for ride state `st`: tire `id`, popped out to
  * `pop` of its size. Returns the next free instance.
  */
-function placeTire(tires, halos, n, st, id, pop, glowSize) {
+/**
+ * Squash and stretch for your tire, like a cartoon: flattened for a moment when it lands
+ * off a ramp or bursts through a wall, then springing back with a wobble. `squash` is
+ * the amount (0 = none); the tire spreads sideways as it flattens.
+ */
+const _squash = new Matrix4()
+const _toCentre = new Matrix4()
+function applySquash(m, at, squash) {
+  if (squash < 0.002) return m
+  _squash.makeScale(1 + squash * 0.6, 1 - squash, 1 + squash * 0.6)
+  _toCentre.makeTranslation(-at.x, -at.y, -at.z)
+  m.premultiply(_toCentre).premultiply(_squash)
+  return m.premultiply(_toCentre.makeTranslation(at.x, at.y, at.z))
+}
+
+/** How squashed your tire is now: a landing or a wall hit, springing back over ~0.35 s. */
+function tireSquash(now) {
+  const since = now - Math.max(roll.landedAt, roll.hitAt)
+  if (since < 0 || since > 350) return 0
+  // A quick flatten, then a little overshoot - a bouncy toy, not a stiff wheel.
+  return 0.28 * Math.exp(-since / 90) * Math.cos(since / 55)
+}
+
+function placeTire(tires, n, st, id, pop, squash = 0) {
   rideTurn(st, _turn)
   tireMatrix(st.position, _turn, TIRE_SIZE * pop, id, _m)
+  applySquash(_m, st.position, squash)
   tires.setMatrixAt(n, _m)
   tires.setStyle(n, id)
-  halos.setMatrixAt(n, _glowM.compose(st.position, _q.identity(), _s.setScalar(glowSize * pop)))
-  halos.setColorAt(n, tireGlow(id))
   return n + 1
 }
 
 /** Lays the warp canyon along the track around `meter`, restyled when the zone changes. */
 function updateWarpCanyon(canyon, meter) {
   const zi = zoneIndexAt(meter)
-  const theme = WARP_THEMES[zi]
+  const theme = warpThemes()[zi]
   const center = meter + WARP_LENGTH * 0.35
   const styles = canyon.geometry.getAttribute('aStyle')
   for (let i = 0; i < WARP_PARTS.length; i += 1) {
@@ -330,7 +357,6 @@ export default function Roll() {
   const warpRef = useRef(null)
   const trophyRef = useRef(null)
   const tiresRef = useRef(null)
-  const tireGlowRef = useRef(null)
   const streakRef = useRef(null)
   /** The roll (its startedAt) the speed lines were last tinted for. */
   const streakTintedFor = useRef(-1)
@@ -351,10 +377,8 @@ export default function Roll() {
 
   const assets = useMemo(() => {
     const trophies = createToyInstances(createTrophyGeometry(), sharedMaterials().toy, MAX_TROPHIES)
-    // Yours (instance 0) and everyone else's: one tire mesh, one halo mesh.
+    // Yours (instance 0) and everyone else's: one tire mesh.
     const tires = createTireMesh(1 + MAX_GHOSTS)
-    const tireGlows = createGlowInstances(1 + MAX_GHOSTS, 0.65)
-    tireGlows.count = 0
 
     const streakMaterial = new ShaderMaterial({
       uniforms: { uOpacity: { value: 0 } },
@@ -390,7 +414,7 @@ export default function Roll() {
     warpCanyon.visible = false
     warpCanyon.frustumCulled = false
 
-    return { trophies, tires, tireGlows, streakMesh, streakMaterial, stars, warpCanyon }
+    return { trophies, tires, streakMesh, streakMaterial, stars, warpCanyon }
   }, [])
 
   // This module loads after the lobby is on screen; compile its shaders in the
@@ -412,14 +436,17 @@ export default function Roll() {
     }
   }, [gl, camera, scene])
 
-  // Each gate's sign: the stage's name and the Health it takes to smash its wall.
+  // Each gate's sign: the stage's name and the Health it takes to smash its wall. The
+  // text turns to face the camera, so it floats GATE_SIGN_AHEAD in front of the board:
+  // seen from the side as the tire weaves, its far end would otherwise swing behind
+  // the board and be cut off.
   useEffect(() => {
     const batch = new LabelBatch({ pageSize: Math.min(512, getQuality().maxTexture) })
-    for (const w of WALLS) {
+    for (const w of walls()) {
       const z = zAt(w.meter)
       batch.add(
         `wall-${w.zone.id}`,
-        [0, surfaceY(z, 0) + GATE_BEAM_Y + GATE_BEAM_H / 2, z + 1.3],
+        [0, surfaceY(z, 0) + GATE_BEAM_Y + GATE_BEAM_H / 2, z + GATE_SIGN_AHEAD],
         {
           lines: [
             { text: w.zone.name, size: 58, gradient: ZONE_THEMES[w.zone.theme].name },
@@ -489,15 +516,13 @@ export default function Roll() {
       assets.trophies.geometry.dispose()
       assets.trophies.dispose()
       disposeTireMesh(assets.tires)
-      disposeGlow(assets.tireGlows)
       assets.streakMesh.geometry.dispose()
       assets.streakMaterial.dispose()
       assets.streakMesh.dispose()
       assets.stars.geometry.dispose()
       assets.stars.material.dispose()
       disposeBlocks(assets.warpCanyon)
-      skyUniforms.topColor.value.copy(DEFAULT_TOP)
-      skyUniforms.horizonColor.value.copy(DEFAULT_HORIZON)
+      showLobbySky(null)
     }
   }, [assets])
 
@@ -530,8 +555,14 @@ export default function Roll() {
       writeDistance(Math.max(0, roll.meter))
       const zi = zoneIndexAt(Math.max(0, roll.meter))
       if (zi !== zoneShown.current) {
+        // Into a new stage (not the one it starts in): confetti round the tire and a
+        // cheerful jingle.
+        if (zoneShown.current >= 0 && zi > zoneShown.current) {
+          sfx.stageUp()
+          if (settings.particles) burst({ x: p.x, y: p.y + 2, z: p.z - 6, count: 44, palette: 'confetti', speed: 10 })
+        }
         zoneShown.current = zi
-        writeZone(zi, ZONES[zi].name, ZONE_NAME_GRADIENTS[zi])
+        writeZone(zi, zones()[zi].name, zoneNameGradients()[zi])
       }
 
       // The sound of the roll, swelling with its speed, gone once it stops.
@@ -579,8 +610,13 @@ export default function Roll() {
         camera.position.set(camBase.x + (Math.random() - 0.5) * amp, camBase.y + (Math.random() - 0.5) * amp, camBase.z)
         camera.lookAt(_look)
         // The view widens with speed: the rush of going fast.
+        // ...and punches wider for a moment on every wall smashed.
+        const sinceHit = now - roll.hitAt
+        const punch = !roll.crashed && sinceHit < 600 ? 7 * Math.exp(-sinceHit / 140) : 0
         const fov =
-          baseFov.current + (roll.phase === 'ride' && !roll.crashed ? Math.min(FOV_KICK, speed * 0.08) : roll.phase === 'stopped' ? -6 : 0)
+          baseFov.current +
+          punch +
+          (roll.phase === 'ride' && !roll.crashed ? Math.min(FOV_KICK, speed * 0.08) : roll.phase === 'stopped' ? -6 : 0)
         // (The frame's own camera handle: the same camera, but writable by lint's rules.)
         const lens = state.camera
         if (Math.abs(fov - lens.fov) > 0.05) {
@@ -593,9 +629,7 @@ export default function Roll() {
       state.camera.fov = baseFov.current
       state.camera.updateProjectionMatrix()
       sfx.windStop()
-      skyUniforms.topColor.value.copy(DEFAULT_TOP)
-      skyUniforms.horizonColor.value.copy(DEFAULT_HORIZON)
-      if (scene.fog) scene.fog.color.set(FOG.color)
+      showLobbySky(scene.fog)
     }
     wasActive.current = roll.active
 
@@ -607,7 +641,7 @@ export default function Roll() {
     want.first = Math.max(0, Math.floor((focus - BEHIND) / CHUNK))
     want.last = Math.floor((focus + ahead) / CHUNK)
     // Less scenery when screaming past at hundreds of metres a second.
-    want.density = settings.decorDensity * (speed > 300 ? 0.35 : speed > 120 ? 0.65 : 1)
+    want.density = settings.decorDensity * (speed > 450 ? 0.5 : speed > 200 ? 0.75 : 1)
     want.shadows = settings.shadows === 'realtime'
     chunkCache.forEach(showIfWanted)
 
@@ -629,15 +663,13 @@ export default function Roll() {
 
     // --- Your tire and everyone else's -------------------------------------------
     const tires = tiresRef.current
-    const halos = tireGlowRef.current
-    if (tires && halos) {
+    if (tires) {
       let n = 0
-      const glowSize = 3.2 * settings.boardGlow
       // It pops out in front of you, then sets off; once it shatters on a gate it's
       // only pieces (Walls.jsx).
       if (roll.active && !roll.crashed) {
         const pop = roll.phase === 'launch' ? Math.min(1, roll.launch / 0.35) : 1
-        n = placeTire(tires, halos, n, roll, roll.tireId, pop, glowSize)
+        n = placeTire(tires, n, roll, roll.tireId, pop, tireSquash(now))
       }
       for (const [sid, ride] of runtime.ghostRolls) {
         const elapsed = (now - ride.startedAt) / 1000
@@ -649,14 +681,11 @@ export default function Roll() {
         if (!st) continue
         rideState(elapsed, ride, ghostLane(sid), st)
         if (st.crashed || camera.position.distanceTo(st.position) > settings.viewDistance) continue
-        n = placeTire(tires, halos, n, st, ride.tireId, st.phase === 'launch' ? Math.min(1, st.launch / 0.35) : 1, glowSize)
+        n = placeTire(tires, n, st, ride.tireId, st.phase === 'launch' ? Math.min(1, st.launch / 0.35) : 1)
       }
       releaseGhosts()
       tires.count = n
-      halos.count = glowSize > 0 ? n : 0
       tires.instanceMatrix.needsUpdate = true
-      halos.instanceMatrix.needsUpdate = true
-      if (halos.instanceColor) halos.instanceColor.needsUpdate = true
     }
 
     // --- Trophies -----------------------------------------------------------------
@@ -666,7 +695,7 @@ export default function Roll() {
       // one popup at most every TROPHY_POPUP_MS.
       const tally = trophyTally.current
       while (tally.next <= Math.min(roll.meter, roll.distance)) {
-        tally.pending += trophyValue(tally.next)
+        tally.pending += trophyValue(tally.next, activeWorld())
         tally.next += TROPHY_SPACING
       }
       if (tally.pending > 0 && now - tally.shownAt >= TROPHY_POPUP_MS) {
@@ -698,9 +727,11 @@ export default function Roll() {
     if (roll.active) {
       const meter = Math.max(0, roll.meter)
       const zi = zoneIndexAt(meter)
-      const blend = smoothstep(ZONES[zi].start, ZONES[zi].start + 80, meter)
-      const prev = ZONE_SKIES[Math.max(0, zi - 1)]
-      const cur = ZONE_SKIES[zi]
+      const stages = zones()
+      const blend = smoothstep(stages[zi].start, stages[zi].start + 80, meter)
+      const skies = zoneSkies()
+      const prev = skies[Math.max(0, zi - 1)]
+      const cur = skies[zi]
       _skyTop.copy(prev[0]).lerp(cur[0], zi === 0 ? 1 : blend)
       _skyHorizon.copy(prev[1]).lerp(cur[1], zi === 0 ? 1 : blend)
       skyUniforms.topColor.value.copy(_skyTop)
@@ -709,7 +740,7 @@ export default function Roll() {
 
       const stars = starsRef.current
       if (stars && particles) {
-        const spaceBlend = STARRY.has(ZONES[zi].theme) ? (STARRY.has(ZONES[Math.max(0, zi - 1)].theme) ? 1 : blend) : 0
+        const spaceBlend = STARRY.has(stages[zi].theme) ? (STARRY.has(stages[Math.max(0, zi - 1)].theme) ? 1 : blend) : 0
         stars.visible = spaceBlend > 0.01
         stars.material.opacity = spaceBlend
         stars.position.copy(camera.position)
@@ -719,6 +750,8 @@ export default function Roll() {
     }
 
     // --- Speed lines --------------------------------------------------------------
+    // The streaking, blurred screen edges (HUD's SpeedTunnel) swell with speed too.
+    writeSpeed(roll.active && !roll.stopped && !roll.crashed ? smoothstep(STREAKS_FROM, STREAKS_FULL * 1.5, speed) : 0, now)
     const lines = streakRef.current
     if (lines) {
       const active = roll.active && !roll.stopped && !roll.crashed && speedLines && speed > STREAKS_FROM
@@ -758,12 +791,13 @@ export default function Roll() {
       <group ref={gatesRef} />
       <primitive ref={warpRef} object={assets.warpCanyon} />
       <primitive ref={trophyRef} object={assets.trophies} />
-      <primitive ref={tireGlowRef} object={assets.tireGlows} />
       <primitive ref={tiresRef} object={assets.tires} />
       <Walls />
+      <Weather />
       <primitive ref={streakRef} object={assets.streakMesh} />
       <primitive ref={starsRef} object={assets.stars} />
       <RollFX />
+      <TireTrail />
       {rolling && motionBlur > 0 && <SpeedBlur samples={motionBlur} antialias={antialias} />}
     </group>
   )

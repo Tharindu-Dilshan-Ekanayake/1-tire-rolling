@@ -11,17 +11,17 @@ import { STYLE } from '../materials'
 
 /**
  * Per-pad look, in pad order (matches PADS in shared/balance.js): the base, the top,
- * the glowing ring, the centre emblem and the colour of its labels. `tire` is the tire
- * that spins over it (TireShop draws those).
+ * the glowing ring, the centre emblem and the colour of its labels. Nothing floats over
+ * a pad: the tire you train with is your own, lying flat on it (Player.jsx).
  */
 export const PAD_THEMES = [
-  { base: '#1f5fc8', top: '#3f9cff', ring: '#9fe8ff', emblem: '#ffffff', text: '#5fd6ff', tire: 'bicycle' },
-  { base: '#b8222e', top: '#ff3b3b', ring: '#ffd21f', emblem: '#1d1f22', text: '#ff7a6a', tire: 'wood' },
-  { base: '#d64a9a', top: '#ff8fd0', ring: '#ffffff', emblem: '#ffd23f', text: '#ff9cd6', tire: 'pizza' },
-  { base: '#1d3f8a', top: '#2f6fe0', ring: '#7fe2ff', emblem: '#ffd21f', text: '#7fb8ff', tire: 'donut' },
-  { base: '#5a2a9a', top: '#8a4cff', ring: '#ff7ad9', emblem: '#ffffff', text: '#c69bff', tire: 'silver' },
-  { base: '#1a8ab8', top: '#7ff0ff', ring: '#ffffff', emblem: '#9b6bff', text: '#9fe8ff', tire: 'gold', style: STYLE.GLOW },
-  { base: '#1b2266', top: '#2a1450', ring: '#c35cff', emblem: '#ffd21f', text: '#d39bff', tire: 'diamond', style: STYLE.GALAXY },
+  { base: '#1f5fc8', top: '#3f9cff', ring: '#9fe8ff', emblem: '#ffffff', text: '#5fd6ff' },
+  { base: '#b8222e', top: '#ff3b3b', ring: '#ffd21f', emblem: '#1d1f22', text: '#ff7a6a' },
+  { base: '#d64a9a', top: '#ff8fd0', ring: '#ffffff', emblem: '#ffd23f', text: '#ff9cd6' },
+  { base: '#1d3f8a', top: '#2f6fe0', ring: '#7fe2ff', emblem: '#ffd21f', text: '#7fb8ff' },
+  { base: '#5a2a9a', top: '#8a4cff', ring: '#ff7ad9', emblem: '#ffffff', text: '#c69bff' },
+  { base: '#1a8ab8', top: '#7ff0ff', ring: '#ffffff', emblem: '#9b6bff', text: '#9fe8ff', style: STYLE.GLOW },
+  { base: '#1b2266', top: '#2a1450', ring: '#c35cff', emblem: '#ffd21f', text: '#d39bff', style: STYLE.GALAXY },
 ]
 
 const DISC = new CylinderGeometry(1, 1, 1, 32)

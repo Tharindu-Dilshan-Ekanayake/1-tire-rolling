@@ -1,6 +1,7 @@
 import { Vector3 } from 'three'
 
 import { runtime } from '../game/runtime'
+import { getGame } from '../store/game'
 
 /**
  * Other players, as the network last described them. Network callbacks write here;
@@ -13,7 +14,16 @@ export const remotePlayers = new Map()
 
 const MAX_SNAPSHOTS = 24
 
+/** Everyone's synced state, whichever world they're in, so a change of world can redraw them. */
+const latest = new Map()
+
 export function upsertRemotePlayer(sessionId, state) {
+  latest.set(sessionId, state)
+  // Only players in your world are drawn: each world feels like its own place.
+  if ((state.world || 0) !== (getGame().profile.world || 0)) {
+    dropRemotePlayer(sessionId)
+    return
+  }
   let r = remotePlayers.get(sessionId)
   if (!r) {
     r = {
@@ -62,7 +72,17 @@ export function upsertRemotePlayer(sessionId, state) {
   }
 }
 
+/** You changed world: shows the players in the new one, hides the rest. */
+export function refreshRemoteWorlds() {
+  for (const [sessionId, state] of latest) upsertRemotePlayer(sessionId, state)
+}
+
 export function removeRemotePlayer(sessionId) {
+  latest.delete(sessionId)
+  dropRemotePlayer(sessionId)
+}
+
+function dropRemotePlayer(sessionId) {
   const r = remotePlayers.get(sessionId)
   if (!r) return
   runtime.shadowCasters.delete(r.shadow)
@@ -72,6 +92,7 @@ export function removeRemotePlayer(sessionId) {
 
 export function clearRemotePlayers() {
   for (const id of [...remotePlayers.keys()]) removeRemotePlayer(id)
+  latest.clear()
   runtime.remotePets.length = 0
   runtime.ghostRolls.clear()
 }

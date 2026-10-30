@@ -11,7 +11,7 @@
  * between the pads and the roll zone, and the fade back after a roll, cost time too.
  * No potions, no daily rewards, no packs: a free player's floor.
  */
-import { EGGS, healthForLevel, levelCap, PADS, PETS, rollDuration, ROLL_RECOVERY, SHOP, TIRES, TRAIN_INTERVAL, ZONES } from '../shared/balance.js'
+import { EGGS, healthForLevel, levelCap, PADS, PETS, rollDuration, ROLL_RECOVERY, SHOP, TIRES, TRAIN_INTERVAL, WORLD_ZONES, ZONES } from '../shared/balance.js'
 import { formatDistance, formatNumber } from '../shared/format.js'
 import {
   applyRebirth,
@@ -21,6 +21,7 @@ import {
   buyShopItem,
   buyTire,
   createProfile,
+  deletePet,
   equipBestPets,
   hatchEgg,
   isMaxLevel,
@@ -29,6 +30,7 @@ import {
   petMultiplier,
   rollOutcome,
   tireById,
+  usePortal,
 } from '../shared/logic.js'
 import { mulberry32 } from '../shared/rng.js'
 
@@ -55,13 +57,17 @@ const bestPad = () => {
 function roll() {
   if (onPad) t += WALK_TO_ROLL
   onPad = false
-  const before = p.stats.bestZone
+  const key = p.world === 1 ? 'bestZone2' : 'bestZone'
+  const before = p.stats[key]
   const r = applyRoll(p, t * 1000)
   // Health ticks in while the tire rolls.
   for (let s = 1; s <= Math.floor(r.duration); s += 1) applyRollTick(p, t * 1000)
   t += r.cooldown + FADE_BACK
   lastRollHealth = p.health
-  for (let z = before + 1; z <= p.stats.bestZone; z += 1) mark(`ZONE  ${ZONES[z].name} reached (+${formatNumber(ZONES[z].discover)} Wins prize)`)
+  const zones = WORLD_ZONES[p.world]
+  for (let z = before + 1; z <= p.stats[key]; z += 1) mark(`ZONE  ${zones[z].name} reached (+${formatNumber(zones[z].discover)} Wins prize)`)
+  // Through the portal as soon as it opens.
+  if (process.env.NO_WORLD2 !== '1' && p.world === 0 && usePortal(p).ok) mark(`WORLD 2 with ${formatNumber(p.wins)} Wins`)
   return r
 }
 
@@ -71,7 +77,14 @@ const weakestEquipped = () => {
   return Math.min(...p.equippedPets.map((uid) => PETS[p.pets.find((x) => x.uid === uid).id].mult))
 }
 
+/** Like a real player: throws away pets it isn't using once the inventory fills up. */
+function tidyPets() {
+  if (p.pets.length < 30) return
+  for (const pet of [...p.pets]) if (!p.equippedPets.includes(pet.uid)) deletePet(p, pet.uid)
+}
+
 function spend() {
+  tidyPets()
   for (;;) {
     const tire = nextTire(p)
     if (tire && p.wins >= tire.cost) {
@@ -93,7 +106,9 @@ function spend() {
     const egg = Object.entries(EGGS)
       .filter(([, e]) => e.cost.wins * 3 <= p.wins && eggAverage(e) > weakestEquipped())
       .sort((a, b) => b[1].cost.wins - a[1].cost.wins)[0]
-    if (egg && (!tire || tire.cost > (p.wins - egg[1].cost.wins * 3) * 3) && p.pets.length < 40) {
+    // (Or whenever three of them cost under a tenth of what we hold.)
+    const cheap = egg && egg[1].cost.wins * 30 <= p.wins
+    if (egg && (cheap || !tire || tire.cost > (p.wins - egg[1].cost.wins * 3) * 3) && p.pets.length < 40) {
       const res = hatchEgg(p, egg[0], 3, { rand })
       if (res.ok) {
         equipBestPets(p)
@@ -121,6 +136,14 @@ while (t < HOURS * 3600) {
     )
     rebirthAt = t
     lastRollHealth = 0
+    // Rebirth gift eggs: hatch them straight away.
+    tidyPets()
+    while ((p.items.eggVolcano || 0) > 0 && p.pets.length < 40) {
+      const res = hatchEgg(p, 'volcano', 1, { paid: 'item', rand })
+      if (!res.ok) break
+      equipBestPets(p)
+      mark(`GIFT  Volcano Egg: ${PETS[res.pets[0].id].name} -> pets x${petMultiplier(p).toFixed(1)}`)
+    }
     continue
   }
   // Train until Health is well up on the last roll, or capped.

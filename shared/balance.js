@@ -32,7 +32,7 @@ export const WALK_STEP = 8
  */
 export const LEVEL_BASE = 20
 export const LEVEL_GROWTH_EARLY = 1.3
-export const LEVEL_GROWTH_LATE = 1.105
+export const LEVEL_GROWTH_LATE = 1.097
 export const LEVEL_GROWTH_FADE = 100
 /** Levels past this are not reachable: the table stops here. */
 export const MAX_LEVEL = 1200
@@ -65,6 +65,25 @@ export const levelCap = (rebirths) => Math.min(MAX_LEVEL, 15 + 8 * Math.max(0, r
 /** Health multiplier from rebirths, as in the reference: R0 = x1, R1 = x2, R2 = x3 ... */
 export const rebirthMultiplier = (rebirths) => 1 + Math.max(0, rebirths)
 
+/**
+ * From Rebirth 15, every 5th rebirth (15, 20, 25...) comes with a gift of eggs: late in
+ * the game, when each rebirth takes longest, there's always one coming up. One more egg
+ * every 10 rebirths, up to 6.
+ */
+export const REBIRTH_GIFT_FROM = 15
+export const REBIRTH_GIFT_EVERY = 5
+export function rebirthGift(rebirths) {
+  if (rebirths < REBIRTH_GIFT_FROM || (rebirths - REBIRTH_GIFT_FROM) % REBIRTH_GIFT_EVERY !== 0) return null
+  const amount = Math.min(6, 3 + Math.floor((rebirths - REBIRTH_GIFT_FROM) / 10))
+  return { rebirths, item: 'eggVolcano', amount, label: `${amount} Volcano Eggs` }
+}
+/** The next rebirth after `rebirths` that brings a gift, and the gift. */
+export function nextRebirthGift(rebirths) {
+  const from = Math.max(REBIRTH_GIFT_FROM, rebirths + 1)
+  const at = from + ((REBIRTH_GIFT_EVERY - ((from - REBIRTH_GIFT_FROM) % REBIRTH_GIFT_EVERY)) % REBIRTH_GIFT_EVERY)
+  return rebirthGift(at)
+}
+
 /** Skipping straight to a rebirth costs this many max-level rolls' worth of Wins. */
 export const REBIRTH_SKIP_ROLLS = 10
 
@@ -81,8 +100,8 @@ export const PADS = [
   { id: 'turbo', name: 'Turbo Pad', mult: 4, rebirths: 2 },
   { id: 'nitro', name: 'Nitro Pad', mult: 10, rebirths: 4 },
   { id: 'rocket', name: 'Rocket Pad', mult: 20, rebirths: 6 },
-  { id: 'diamond', name: 'Diamond Pad', mult: 40, product: 'padVeryOp', tag: 'VERY OP!' },
-  { id: 'galaxy', name: 'Galaxy Pad', mult: 100, product: 'padBest', tag: 'BEST OVERALL!' },
+  { id: 'diamond', name: 'Diamond', mult: 40, product: 'padVeryOp', tag: 'VERY OP!' },
+  { id: 'galaxy', name: 'Galaxy Planet', mult: 100, product: 'padBest', tag: 'BEST OVERALL!' },
 ]
 
 // --- Tires ------------------------------------------------------------------------
@@ -96,97 +115,118 @@ export const PADS = [
  * list, the crazier and shinier it gets. About x2.6 power for x2.8-x3.3 the Wins each.
  */
 export const TIRES = [
-  { id: 'bicycle', name: 'Worn Bicycle', power: 1, cost: 0, rarity: 'common' },
+  { id: 'bicycle', name: 'Orange Slice', power: 1, cost: 0, rarity: 'common' },
   // Cheap enough to buy with the Wins from your very first roll.
-  { id: 'mountain', name: 'Mountain Bike', power: 3, cost: 1, rarity: 'common' },
+  { id: 'mountain', name: 'Lime Slice', power: 3, cost: 1, rarity: 'common' },
   { id: 'wood', name: 'Wooden Wheel', power: 5, cost: 15, rarity: 'common' },
   { id: 'stone', name: 'Stone Wheel', power: 12, cost: 75, rarity: 'uncommon' },
-  { id: 'cookie', name: 'Cookie Tire', power: 30, cost: 300, rarity: 'uncommon' },
-  { id: 'pizza', name: 'Pizza Tire', power: 75, cost: 1200, rarity: 'rare' },
-  { id: 'donut', name: 'Donut Tire', power: 200, cost: 4500, rarity: 'rare' },
-  { id: 'watermelon', name: 'Watermelon Tire', power: 500, cost: 16000, rarity: 'rare' },
-  { id: 'monster', name: 'Monster Truck', power: 1250, cost: 55000, rarity: 'epic' },
-  { id: 'mint', name: 'Peppermint Tire', power: 3500, cost: 180000, rarity: 'epic' },
-  { id: 'silver', name: 'Silver Tire', power: 9000, cost: 600000, rarity: 'epic' },
-  { id: 'ice', name: 'Ice Tire', power: 23000, cost: 2e6, rarity: 'epic' },
-  { id: 'gold', name: 'Gold Tire', power: 60000, cost: 6e6, rarity: 'legendary' },
-  { id: 'lava', name: 'Lava Tire', power: 155000, cost: 17e6, rarity: 'legendary' },
-  { id: 'platinum', name: 'Platinum Tire', power: 400000, cost: 48e6, rarity: 'legendary' },
-  { id: 'emerald', name: 'Emerald Tire', power: 1.05e6, cost: 135e6, rarity: 'legendary' },
-  { id: 'ruby', name: 'Ruby Tire', power: 2.7e6, cost: 380e6, rarity: 'mythic' },
+  { id: 'cookie', name: 'Giant Cookie', power: 30, cost: 300, rarity: 'uncommon' },
+  { id: 'pizza', name: 'Pizza Wheel', power: 75, cost: 1200, rarity: 'rare' },
+  { id: 'donut', name: 'Donut', power: 200, cost: 4500, rarity: 'rare' },
+  { id: 'watermelon', name: 'Watermelon', power: 500, cost: 16000, rarity: 'rare' },
+  { id: 'monster', name: 'Cheese Wheel', power: 1250, cost: 55000, rarity: 'epic' },
+  { id: 'mint', name: 'Peppermint Candy', power: 3500, cost: 180000, rarity: 'epic' },
+  { id: 'silver', name: 'Silver Coin', power: 9000, cost: 600000, rarity: 'epic' },
+  { id: 'ice', name: 'Ice Cream', power: 23000, cost: 2e6, rarity: 'epic' },
+  { id: 'gold', name: 'Gold Coin', power: 60000, cost: 6e6, rarity: 'legendary' },
+  { id: 'lava', name: 'Lava Rock', power: 155000, cost: 17e6, rarity: 'legendary' },
+  { id: 'platinum', name: 'Sushi Roll', power: 400000, cost: 48e6, rarity: 'legendary' },
+  { id: 'emerald', name: 'Slime Ball', power: 1.05e6, cost: 135e6, rarity: 'legendary' },
+  { id: 'ruby', name: 'Burger', power: 2.7e6, cost: 380e6, rarity: 'mythic' },
   { id: 'diamond', name: 'Diamond Tire', power: 7e6, cost: 1.05e9, rarity: 'mythic' },
-  { id: 'rainbow', name: 'Rainbow Tire', power: 1.8e7, cost: 3e9, rarity: 'mythic' },
-  { id: 'unicorn', name: 'Unicorn Tire', power: 4.8e7, cost: 8.5e9, rarity: 'mythic' },
+  { id: 'rainbow', name: 'Rainbow Candy', power: 1.8e7, cost: 3e9, rarity: 'mythic' },
+  { id: 'unicorn', name: 'Unicorn Cloud', power: 4.8e7, cost: 8.5e9, rarity: 'mythic' },
   { id: 'galaxy', name: 'Galaxy Tire', power: 1.25e8, cost: 2.4e10, rarity: 'secret' },
-  { id: 'dragon', name: 'Dragon Tire', power: 3.3e8, cost: 6.8e10, rarity: 'secret' },
-  { id: 'cosmic', name: 'Cosmic Tire', power: 8.6e8, cost: 1.9e11, rarity: 'secret' },
-  { id: 'infinity', name: 'Infinity Tire', power: 2.2e9, cost: 5.4e11, rarity: 'secret' },
+  { id: 'dragon', name: 'Dragon Scale', power: 3.3e8, cost: 6.8e10, rarity: 'secret' },
+  { id: 'cosmic', name: 'Birthday Cake', power: 8.6e8, cost: 1.9e11, rarity: 'secret' },
+  { id: 'infinity', name: 'Infinity Crystal', power: 2.2e9, cost: 5.4e11, rarity: 'secret' },
 ]
 
 // --- Rolling ----------------------------------------------------------------------
 
 /**
- * distance (m) = base + k * ln(1 + health / h0): 30 Health rolls about 180 m, the first
- * max level (2,300) about 1 km, and every rebirth adds a few hundred metres more - so
- * the track stays short and its stages short, however huge Health gets.
+ * How far a tire rolls: 0 Health still rolls ROLL_BASE metres, and the first gate is
+ * reached with the Health its wall needs, less WALL_MARGIN; between gates distance
+ * follows Health (in log terms) from one gate's mark to the next. So the gates' Health
+ * sets the pace, and their spacing - each stage a little longer than the last - is just
+ * how it looks. See logic.rollReach.
  */
 export const ROLL_BASE = 60
-export const ROLL_K = 260
 export const ROLL_H0 = 50
-/** Every stage is this long: a new gate every 300 m, all the way. */
-export const STAGE_LENGTH = 300
+/** A gate's wall needs this many times the Health that just reaches it. */
+export const WALL_MARGIN = 1.3
 
 /**
- * The track's forty stages, STAGE_LENGTH apart, each behind a gate with a wooden wall
- * across it. `theme` picks the stage's look (one of twenty, so the second twenty are
- * new places in familiar colours). `wall` = Health needed to smash through it (a tire
- * with less crashes into it and stops); `winsPerMeter` pays for every metre rolled in
- * the stage; `smash` is the Wins for breaking the wall on any roll, and `discover` a
- * one-off prize the first time you ever reach the stage. Each gate's wall needs a bit
- * more Health than it takes to roll up to it, so you reach a gate a little before you
- * can smash it: train a bit more, or rebirth. Generated by scripts/gen-stages.py.
+ * The track's sixty stages, each behind a gate with a wooden wall across it, each a
+ * little longer than the one before (100 m, 106 m, 112 m ... about 450 m). `theme` picks
+ * the stage's look (one of twenty, so later stages are new places in familiar colours).
+ * `wall` = Health needed to smash through it (a tire with less crashes into it and
+ * breaks); each needs about twice the last, a touch more further on. `winsPerMeter`
+ * pays for every metre rolled in the stage; `smash` is the Wins for breaking the wall on
+ * any roll, and `discover` a one-off prize the first time you ever reach the stage.
+ * Generated by scripts/gen-stages.py.
  */
 export const ZONES = [
   { id: 'grassy', name: 'Grassy Meadow', theme: 'grassy', start: 0, wall: 0, winsPerMeter: 0.006, smash: 0, discover: 0 },
-  { id: 'autumn', name: 'Autumn Forest', theme: 'autumn', start: 300, wall: 99, winsPerMeter: 0.0108, smash: 2, discover: 5 },
-  { id: 'desert', name: 'Desert Canyon', theme: 'desert', start: 600, wall: 450, winsPerMeter: 0.0194, smash: 4, discover: 9 },
-  { id: 'beach', name: 'Sunny Beach', theme: 'beach', start: 900, wall: 1600, winsPerMeter: 0.035, smash: 6, discover: 16 },
-  { id: 'jungle', name: 'Jungle Ruins', theme: 'jungle', start: 1200, wall: 5100, winsPerMeter: 0.063, smash: 12, discover: 29 },
-  { id: 'frozen', name: 'Frozen Peaks', theme: 'frozen', start: 1500, wall: 16000, winsPerMeter: 0.113, smash: 21, discover: 52 },
-  { id: 'cherry', name: 'Cherry Blossom', theme: 'cherry', start: 1800, wall: 52000, winsPerMeter: 0.204, smash: 38, discover: 94 },
-  { id: 'candy', name: 'Candy Land', theme: 'candy', start: 2100, wall: 170000, winsPerMeter: 0.367, smash: 68, discover: 170 },
-  { id: 'mushroom', name: 'Mushroom Valley', theme: 'mushroom', start: 2400, wall: 530000, winsPerMeter: 0.661, smash: 120, discover: 310 },
-  { id: 'volcano', name: 'Lava Volcano', theme: 'volcano', start: 2700, wall: 1.7e6, winsPerMeter: 1.19, smash: 220, discover: 550 },
-  { id: 'swamp', name: 'Lily Swamp', theme: 'swamp', start: 3000, wall: 5.3e6, winsPerMeter: 2.14, smash: 400, discover: 990 },
-  { id: 'crystal', name: 'Crystal Caves', theme: 'crystal', start: 3300, wall: 1.7e7, winsPerMeter: 3.86, smash: 710, discover: 1800 },
-  { id: 'ocean', name: 'Coral Reef', theme: 'ocean', start: 3600, wall: 5.3e7, winsPerMeter: 6.94, smash: 1300, discover: 3200 },
-  { id: 'neon', name: 'Neon City', theme: 'neon', start: 3900, wall: 1.7e8, winsPerMeter: 12.5, smash: 2300, discover: 5800 },
-  { id: 'sky', name: 'Cloud Kingdom', theme: 'sky', start: 4200, wall: 5.3e8, winsPerMeter: 22.5, smash: 4200, discover: 10000 },
-  { id: 'rainbow', name: 'Rainbow Road', theme: 'rainbow', start: 4500, wall: 1.7e9, winsPerMeter: 40.5, smash: 7500, discover: 19000 },
-  { id: 'moon', name: 'Moon Base', theme: 'moon', start: 4800, wall: 5.4e9, winsPerMeter: 72.9, smash: 13000, discover: 34000 },
-  { id: 'aurora', name: 'Aurora Tundra', theme: 'aurora', start: 5100, wall: 1.7e10, winsPerMeter: 131, smash: 24000, discover: 61000 },
-  { id: 'space', name: 'Outer Space', theme: 'space', start: 5400, wall: 5.4e10, winsPerMeter: 236, smash: 44000, discover: 110000 },
-  { id: 'cosmic', name: 'Cosmic Core', theme: 'cosmic', start: 5700, wall: 1.7e11, winsPerMeter: 425, smash: 79000, discover: 200000 },
-  { id: 'hills', name: 'Green Hills', theme: 'grassy', start: 6000, wall: 5.4e11, winsPerMeter: 765, smash: 140000, discover: 350000 },
-  { id: 'maple', name: 'Maple Woods', theme: 'autumn', start: 6300, wall: 1.7e12, winsPerMeter: 1380, smash: 250000, discover: 640000 },
-  { id: 'dunes', name: 'Dune Sea', theme: 'desert', start: 6600, wall: 5.5e12, winsPerMeter: 2480, smash: 460000, discover: 1.1e6 },
-  { id: 'island', name: 'Palm Island', theme: 'beach', start: 6900, wall: 1.7e13, winsPerMeter: 4460, smash: 830000, discover: 2.1e6 },
-  { id: 'temple', name: 'Lost Temple', theme: 'jungle', start: 7200, wall: 5.5e13, winsPerMeter: 8030, smash: 1.5e6, discover: 3.7e6 },
-  { id: 'glacier', name: 'Glacier Pass', theme: 'frozen', start: 7500, wall: 1.7e14, winsPerMeter: 14500, smash: 2.7e6, discover: 6.7e6 },
-  { id: 'sakura', name: 'Sakura Garden', theme: 'cherry', start: 7800, wall: 5.5e14, winsPerMeter: 26000, smash: 4.8e6, discover: 1.2e7 },
-  { id: 'sweets', name: 'Sweet Valley', theme: 'candy', start: 8100, wall: 1.7e15, winsPerMeter: 46800, smash: 8.7e6, discover: 2.2e7 },
-  { id: 'fungi', name: 'Fungi Forest', theme: 'mushroom', start: 8400, wall: 5.5e15, winsPerMeter: 84300, smash: 1.6e7, discover: 3.9e7 },
-  { id: 'magma', name: 'Magma Core', theme: 'volcano', start: 8700, wall: 1.8e16, winsPerMeter: 152000, smash: 2.8e7, discover: 7e7 },
-  { id: 'marsh', name: 'Green Marsh', theme: 'swamp', start: 9000, wall: 5.6e16, winsPerMeter: 273000, smash: 5.1e7, discover: 1.3e8 },
-  { id: 'gems', name: 'Gem Mines', theme: 'crystal', start: 9300, wall: 1.8e17, winsPerMeter: 492000, smash: 9.1e7, discover: 2.3e8 },
-  { id: 'deep', name: 'Deep Ocean', theme: 'ocean', start: 9600, wall: 5.6e17, winsPerMeter: 885000, smash: 1.6e8, discover: 4.1e8 },
-  { id: 'cyber', name: 'Cyber City', theme: 'neon', start: 9900, wall: 1.8e18, winsPerMeter: 1.59e6, smash: 2.9e8, discover: 7.4e8 },
-  { id: 'castle', name: 'Sky Castle', theme: 'sky', start: 10200, wall: 5.6e18, winsPerMeter: 2.87e6, smash: 5.3e8, discover: 1.3e9 },
-  { id: 'prism', name: 'Prism Path', theme: 'rainbow', start: 10500, wall: 1.8e19, winsPerMeter: 5.16e6, smash: 9.6e8, discover: 2.4e9 },
-  { id: 'lunar', name: 'Lunar Craters', theme: 'moon', start: 10800, wall: 5.7e19, winsPerMeter: 9.29e6, smash: 1.7e9, discover: 4.3e9 },
-  { id: 'lights', name: 'Northern Lights', theme: 'aurora', start: 11100, wall: 1.8e20, winsPerMeter: 1.67e7, smash: 3.1e9, discover: 7.7e9 },
-  { id: 'galaxy', name: 'Galaxy Rift', theme: 'space', start: 11400, wall: 5.7e20, winsPerMeter: 3.01e7, smash: 5.6e9, discover: 1.4e10 },
-  { id: 'infinity', name: 'Infinity', theme: 'cosmic', start: 11700, wall: 1.8e21, winsPerMeter: 5.42e7, smash: 1e10, discover: 2.5e10 },
+  { id: 'autumn', name: 'Autumn Forest', theme: 'autumn', start: 100, wall: 11, winsPerMeter: 0.0072, smash: 2, discover: 5 },
+  { id: 'desert', name: 'Desert Canyon', theme: 'desert', start: 200, wall: 21, winsPerMeter: 0.00984, smash: 3, discover: 7 },
+  { id: 'beach', name: 'Sunny Beach', theme: 'beach', start: 306, wall: 41, winsPerMeter: 0.0135, smash: 4, discover: 9 },
+  { id: 'jungle', name: 'Jungle Ruins', theme: 'jungle', start: 418, wall: 79, winsPerMeter: 0.0185, smash: 5, discover: 13 },
+  { id: 'frozen', name: 'Frozen Peaks', theme: 'frozen', start: 536, wall: 150, winsPerMeter: 0.0255, smash: 7, discover: 18 },
+  { id: 'cherry', name: 'Cherry Blossom', theme: 'cherry', start: 660, wall: 300, winsPerMeter: 0.0351, smash: 10, discover: 24 },
+  { id: 'candy', name: 'Candy Land', theme: 'candy', start: 790, wall: 590, winsPerMeter: 0.0486, smash: 13, discover: 34 },
+  { id: 'mushroom', name: 'Mushroom Valley', theme: 'mushroom', start: 926, wall: 1200, winsPerMeter: 0.0673, smash: 19, discover: 47 },
+  { id: 'volcano', name: 'Lava Volcano', theme: 'volcano', start: 1068, wall: 2300, winsPerMeter: 0.0934, smash: 26, discover: 65 },
+  { id: 'swamp', name: 'Lily Swamp', theme: 'swamp', start: 1216, wall: 4600, winsPerMeter: 0.13, smash: 36, discover: 90 },
+  { id: 'crystal', name: 'Crystal Caves', theme: 'crystal', start: 1370, wall: 9200, winsPerMeter: 0.181, smash: 50, discover: 130 },
+  { id: 'ocean', name: 'Coral Reef', theme: 'ocean', start: 1530, wall: 18000, winsPerMeter: 0.253, smash: 70, discover: 180 },
+  { id: 'neon', name: 'Neon City', theme: 'neon', start: 1696, wall: 37000, winsPerMeter: 0.355, smash: 99, discover: 250 },
+  { id: 'sky', name: 'Cloud Kingdom', theme: 'sky', start: 1868, wall: 75000, winsPerMeter: 0.498, smash: 140, discover: 350 },
+  { id: 'rainbow', name: 'Rainbow Road', theme: 'rainbow', start: 2046, wall: 150000, winsPerMeter: 0.7, smash: 190, discover: 490 },
+  { id: 'moon', name: 'Moon Base', theme: 'moon', start: 2230, wall: 310000, winsPerMeter: 0.987, smash: 270, discover: 690 },
+  { id: 'aurora', name: 'Aurora Tundra', theme: 'aurora', start: 2420, wall: 640000, winsPerMeter: 1.39, smash: 390, discover: 970 },
+  { id: 'space', name: 'Outer Space', theme: 'space', start: 2616, wall: 1.3e6, winsPerMeter: 1.97, smash: 550, discover: 1400 },
+  { id: 'cosmic', name: 'Cosmic Core', theme: 'cosmic', start: 2818, wall: 2.7e6, winsPerMeter: 2.8, smash: 780, discover: 1900 },
+  { id: 'hills', name: 'Green Hills', theme: 'grassy', start: 3026, wall: 5.7e6, winsPerMeter: 3.98, smash: 1100, discover: 2800 },
+  { id: 'maple', name: 'Maple Woods', theme: 'autumn', start: 3240, wall: 1.2e7, winsPerMeter: 5.66, smash: 1600, discover: 3900 },
+  { id: 'dunes', name: 'Dune Sea', theme: 'desert', start: 3460, wall: 2.5e7, winsPerMeter: 8.08, smash: 2200, discover: 5600 },
+  { id: 'island', name: 'Palm Island', theme: 'beach', start: 3686, wall: 5.3e7, winsPerMeter: 11.6, smash: 3200, discover: 8000 },
+  { id: 'temple', name: 'Lost Temple', theme: 'jungle', start: 3918, wall: 1.1e8, winsPerMeter: 16.6, smash: 4600, discover: 12000 },
+  { id: 'glacier', name: 'Glacier Pass', theme: 'frozen', start: 4156, wall: 2.4e8, winsPerMeter: 23.8, smash: 6600, discover: 17000 },
+  { id: 'sakura', name: 'Sakura Garden', theme: 'cherry', start: 4400, wall: 5.1e8, winsPerMeter: 34.2, smash: 9500, discover: 24000 },
+  { id: 'sweets', name: 'Sweet Valley', theme: 'candy', start: 4650, wall: 1.1e9, winsPerMeter: 49.3, smash: 14000, discover: 34000 },
+  { id: 'fungi', name: 'Fungi Forest', theme: 'mushroom', start: 4906, wall: 2.3e9, winsPerMeter: 71.3, smash: 20000, discover: 50000 },
+  { id: 'magma', name: 'Magma Core', theme: 'volcano', start: 5168, wall: 5e9, winsPerMeter: 103, smash: 29000, discover: 72000 },
+  { id: 'marsh', name: 'Green Marsh', theme: 'swamp', start: 5436, wall: 1.1e10, winsPerMeter: 150, smash: 42000, discover: 100000 },
+  { id: 'gems', name: 'Gem Mines', theme: 'crystal', start: 5710, wall: 2.4e10, winsPerMeter: 218, smash: 60000, discover: 150000 },
+  { id: 'deep', name: 'Deep Ocean', theme: 'ocean', start: 5990, wall: 5.2e10, winsPerMeter: 317, smash: 88000, discover: 220000 },
+  { id: 'cyber', name: 'Cyber City', theme: 'neon', start: 6276, wall: 1.1e11, winsPerMeter: 462, smash: 130000, discover: 320000 },
+  { id: 'castle', name: 'Sky Castle', theme: 'sky', start: 6568, wall: 2.5e11, winsPerMeter: 676, smash: 190000, discover: 470000 },
+  { id: 'prism', name: 'Prism Path', theme: 'rainbow', start: 6866, wall: 5.6e11, winsPerMeter: 990, smash: 270000, discover: 690000 },
+  { id: 'lunar', name: 'Lunar Craters', theme: 'moon', start: 7170, wall: 1.2e12, winsPerMeter: 1450, smash: 400000, discover: 1e6 },
+  { id: 'lights', name: 'Northern Lights', theme: 'aurora', start: 7480, wall: 2.8e12, winsPerMeter: 2140, smash: 590000, discover: 1.5e6 },
+  { id: 'galaxy', name: 'Galaxy Rift', theme: 'space', start: 7796, wall: 6.2e12, winsPerMeter: 3150, smash: 870000, discover: 2.2e6 },
+  { id: 'infinity', name: 'Infinity', theme: 'cosmic', start: 8118, wall: 1.4e13, winsPerMeter: 4650, smash: 1.3e6, discover: 3.2e6 },
+  { id: 'sunflower', name: 'Sunflower Fields', theme: 'grassy', start: 8446, wall: 3.2e13, winsPerMeter: 6870, smash: 1.9e6, discover: 4.8e6 },
+  { id: 'harvest', name: 'Harvest Valley', theme: 'autumn', start: 8780, wall: 7.2e13, winsPerMeter: 10200, smash: 2.8e6, discover: 7.1e6 },
+  { id: 'oasis', name: 'Golden Oasis', theme: 'desert', start: 9120, wall: 1.6e14, winsPerMeter: 15100, smash: 4.2e6, discover: 1e7 },
+  { id: 'lagoon', name: 'Blue Lagoon', theme: 'beach', start: 9466, wall: 3.7e14, winsPerMeter: 22500, smash: 6.2e6, discover: 1.6e7 },
+  { id: 'canopy', name: 'Treetop Canopy', theme: 'jungle', start: 9818, wall: 8.6e14, winsPerMeter: 33500, smash: 9.3e6, discover: 2.3e7 },
+  { id: 'yeti', name: 'Yeti Mountain', theme: 'frozen', start: 10176, wall: 2e15, winsPerMeter: 50000, smash: 1.4e7, discover: 3.5e7 },
+  { id: 'lantern', name: 'Lantern Garden', theme: 'cherry', start: 10540, wall: 4.6e15, winsPerMeter: 74800, smash: 2.1e7, discover: 5.2e7 },
+  { id: 'cupcake', name: 'Cupcake Kingdom', theme: 'candy', start: 10910, wall: 1.1e16, winsPerMeter: 112000, smash: 3.1e7, discover: 7.8e7 },
+  { id: 'glowcap', name: 'Glowcap Grotto', theme: 'mushroom', start: 11286, wall: 2.5e16, winsPerMeter: 168000, smash: 4.7e7, discover: 1.2e8 },
+  { id: 'inferno', name: 'Inferno Peak', theme: 'volcano', start: 11668, wall: 5.8e16, winsPerMeter: 253000, smash: 7e7, discover: 1.8e8 },
+  { id: 'bayou', name: 'Firefly Bayou', theme: 'swamp', start: 12056, wall: 1.4e17, winsPerMeter: 382000, smash: 1.1e8, discover: 2.7e8 },
+  { id: 'geode', name: 'Geode Valley', theme: 'crystal', start: 12450, wall: 3.2e17, winsPerMeter: 576000, smash: 1.6e8, discover: 4e8 },
+  { id: 'atlantis', name: 'Atlantis', theme: 'ocean', start: 12850, wall: 7.6e17, winsPerMeter: 872000, smash: 2.4e8, discover: 6.1e8 },
+  { id: 'arcade', name: 'Arcade Avenue', theme: 'neon', start: 13256, wall: 1.8e18, winsPerMeter: 1.3e6, smash: 3.7e8, discover: 9.2e8 },
+  { id: 'islands', name: 'Sky Islands', theme: 'sky', start: 13668, wall: 4.3e18, winsPerMeter: 2e6, smash: 5.6e8, discover: 1.4e9 },
+  { id: 'unicorn', name: 'Unicorn Trail', theme: 'rainbow', start: 14086, wall: 1e19, winsPerMeter: 3e6, smash: 8.5e8, discover: 2.1e9 },
+  { id: 'mars', name: 'Red Planet', theme: 'moon', start: 14510, wall: 2.5e19, winsPerMeter: 4.7e6, smash: 1.3e9, discover: 3.2e9 },
+  { id: 'comet', name: 'Comet Ice', theme: 'aurora', start: 14940, wall: 6e19, winsPerMeter: 7.1e6, smash: 2e9, discover: 4.9e9 },
+  { id: 'nebula', name: 'Nebula', theme: 'space', start: 15376, wall: 1.5e20, winsPerMeter: 1.1e7, smash: 3e9, discover: 7.5e9 },
+  { id: 'beyond', name: 'The Beyond', theme: 'cosmic', start: 15818, wall: 3.5e20, winsPerMeter: 1.7e7, smash: 4.6e9, discover: 1.2e10 },
 ]
 
 /** A tire that can't break a wall stops this far short of it, bounced back off it. */
@@ -254,9 +294,9 @@ export const PETS = {
 export const EGGS = {
   basic: { name: 'Basic', cost: { wins: 15 }, pets: [['cat', 45], ['dog', 30], ['bunny', 20], ['bear', 5]] },
   meadow: { name: 'Grass', cost: { wins: 120 }, pets: [['cow', 45], ['parrot', 30], ['fox', 20], ['tiger', 5]] },
-  sunset: { name: 'Sunset', cost: { wins: 1200 }, pets: [['flamingo', 45], ['turtle', 30], ['owl', 20], ['phoenix', 5]] },
-  unicorn: { name: 'Unicorn', cost: { wins: 12000 }, pets: [['pony', 50], ['unicorn', 35], ['pegasus', 15]] },
-  volcano: { name: 'Volcano', cost: { wins: 90000 }, pets: [['salamander', 50], ['firebird', 30], ['golem', 15], ['inferno', 5]] },
+  sunset: { name: 'Sunset', cost: { wins: 750 }, pets: [['flamingo', 45], ['turtle', 30], ['owl', 20], ['phoenix', 5]] },
+  unicorn: { name: 'Unicorn', cost: { wins: 6000 }, pets: [['pony', 50], ['unicorn', 35], ['pegasus', 15]] },
+  volcano: { name: 'Volcano', cost: { wins: 35000 }, pets: [['salamander', 50], ['firebird', 30], ['golem', 15], ['inferno', 5]] },
 }
 
 export const MAX_EQUIPPED_PETS = 3
@@ -319,6 +359,104 @@ export const OFFLINE_MIN_MS = 60 * 1000
 export const WORLD_PORTALS = {
   world2: { name: 'World 2', wins: 25000 },
 }
+
+// --- Worlds -----------------------------------------------------------------------
+
+/**
+ * World 2, through the portal once you hold WORLD_PORTALS.world2.wins: the same track
+ * and gates, stage for stage, renamed and repainted in a new order (it opens in Candy
+ * Land), and every metre, trophy, smash and first-visit prize on it pays `wins` times
+ * as much. Its gates need the same Health as World 1's - a harder World 2 would pay
+ * less than World 1 right after each rebirth - so going over is always worth it, and
+ * coming back (the same portal) costs nothing.
+ */
+export const WORLDS = [
+  { id: 'world1', name: 'World 1', wins: 1 },
+  { id: 'world2', name: 'World 2', wins: 3 },
+]
+
+/** World 2's stages: [id, name, theme], one for each of World 1's. */
+const WORLD2_STAGES = [
+  ['w2-lollipop', 'Lollipop Lane', 'candy'],
+  ['w2-rainbow-bridge', 'Rainbow Bridge', 'rainbow'],
+  ['w2-balloon', 'Balloon Skies', 'sky'],
+  ['w2-gem-garden', 'Gem Garden', 'crystal'],
+  ['w2-pixel', 'Pixel Park', 'neon'],
+  ['w2-blossom', 'Blossom Bay', 'cherry'],
+  ['w2-toadstool', 'Toadstool Town', 'mushroom'],
+  ['w2-bubble', 'Bubble Lagoon', 'ocean'],
+  ['w2-polar', 'Polar Lights', 'aurora'],
+  ['w2-moonbounce', 'Moonbounce', 'moon'],
+  ['w2-dragon-den', "Dragon's Den", 'volcano'],
+  ['w2-monkey', 'Monkey Jungle', 'jungle'],
+  ['w2-froggy', 'Froggy Pond', 'swamp'],
+  ['w2-penguin', 'Penguin Slopes', 'frozen'],
+  ['w2-pirate', 'Pirate Cove', 'beach'],
+  ['w2-pharaoh', 'Pharaoh Dunes', 'desert'],
+  ['w2-acorn', 'Acorn Woods', 'autumn'],
+  ['w2-bunny', 'Bunny Hills', 'grassy'],
+  ['w2-rocket', 'Rocket Run', 'space'],
+  ['w2-star-factory', 'Star Factory', 'cosmic'],
+  ['w2-gumdrop', 'Gumdrop Hills', 'candy'],
+  ['w2-unicorn-meadow', 'Unicorn Meadow', 'rainbow'],
+  ['w2-floating', 'Floating Isles', 'sky'],
+  ['w2-amethyst', 'Amethyst Hollow', 'crystal'],
+  ['w2-robot', 'Robot City', 'neon'],
+  ['w2-tea', 'Tea Garden', 'cherry'],
+  ['w2-fairy', 'Fairy Ring', 'mushroom'],
+  ['w2-shark', 'Shark Reef', 'ocean'],
+  ['w2-snow-owl', 'Snow Owl Peak', 'aurora'],
+  ['w2-crater', 'Crater Camp', 'moon'],
+  ['w2-fire-falls', 'Fire Falls', 'volcano'],
+  ['w2-tiger', 'Tiger Temple', 'jungle'],
+  ['w2-gator', 'Gator Bayou', 'swamp'],
+  ['w2-yeti', 'Yeti Cave', 'frozen'],
+  ['w2-treasure', 'Treasure Island', 'beach'],
+  ['w2-cactus', 'Cactus Canyon', 'desert'],
+  ['w2-maple', 'Maple Mill', 'autumn'],
+  ['w2-windmill', 'Windmill Farm', 'grassy'],
+  ['w2-asteroid', 'Asteroid Belt', 'space'],
+  ['w2-supernova', 'Supernova', 'cosmic'],
+  ['w2-chocolate', 'Chocolate River', 'candy'],
+  ['w2-prism', 'Prism Palace', 'rainbow'],
+  ['w2-thunder', 'Thunder Clouds', 'sky'],
+  ['w2-diamond-depths', 'Diamond Depths', 'crystal'],
+  ['w2-hologram', 'Hologram Highway', 'neon'],
+  ['w2-dragon-garden', 'Dragon Garden', 'cherry'],
+  ['w2-glow-forest', 'Glow Forest', 'mushroom'],
+  ['w2-kraken', 'Kraken Deep', 'ocean'],
+  ['w2-frost-crown', 'Frost Crown', 'aurora'],
+  ['w2-saturn', 'Saturn Rings', 'moon'],
+  ['w2-magma-throne', 'Magma Throne', 'volcano'],
+  ['w2-dino', 'Dino Valley', 'jungle'],
+  ['w2-lotus', 'Lotus Marsh', 'swamp'],
+  ['w2-ice-palace', 'Ice Palace', 'frozen'],
+  ['w2-mermaid', 'Mermaid Shores', 'beach'],
+  ['w2-sphinx-sands', 'Sphinx Sands', 'desert'],
+  ['w2-golden-grove', 'Golden Grove', 'autumn'],
+  ['w2-clover', 'Clover Kingdom', 'grassy'],
+  ['w2-black-hole', 'Black Hole', 'space'],
+  ['w2-multiverse', 'The Multiverse', 'cosmic'],
+]
+
+const worldZones = (world) =>
+  ZONES.map((zone, i) => {
+    const mult = WORLDS[world].wins
+    const [id, name, theme] = world === 1 ? WORLD2_STAGES[i] : [zone.id, zone.name, zone.theme]
+    return {
+      ...zone,
+      id,
+      name,
+      theme,
+      winsPerMeter: zone.winsPerMeter * mult,
+      smash: zone.smash * mult,
+      discover: zone.discover * mult,
+    }
+  })
+
+/** Each world's stages, as ZONES: `WORLD_ZONES[profile.world]`. */
+export const WORLD_ZONES = [ZONES, worldZones(1)]
+export const zonesOf = (world) => WORLD_ZONES[world] ?? ZONES
 
 // --- Shop -------------------------------------------------------------------------
 
@@ -384,9 +522,7 @@ export const HEALTH_PACKS = [
 export const TUTORIAL = [
   { text: 'Hop on a training pad to gain Health', event: 'train', target: 'pad0', health: 30 },
   { text: 'Roll your tire to earn Wins', event: 'roll', target: 'roll' },
-  { text: 'Buy the Mountain Bike tire at the showroom!', event: 'buyTire', target: 'tires' },
-  { text: 'Roll again - go further!', event: 'roll', target: 'roll' },
-  { text: 'Rebirth for x2 gains!', event: 'rebirth', target: null },
+  { text: 'Buy a new tire with your Wins!', event: 'buyTire', target: 'tires' },
 ]
 
 export const BADGES = {

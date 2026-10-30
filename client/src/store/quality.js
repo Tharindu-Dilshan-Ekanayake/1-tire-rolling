@@ -17,7 +17,7 @@ export const PRESETS = {
     shadows: 'blob',
     shadowMapSize: 0,
     particles: false,
-    speedLines: false,
+    speedLines: true,
     /** Motion blur down the sides at speed (post-processing): samples a pixel, 0 = off. */
     motionBlur: 0,
     viewDistance: 190,
@@ -26,13 +26,15 @@ export const PRESETS = {
     /** Max side of any generated texture. */
     maxTexture: 512,
     /**
-     * Other players are drawn this far away - the whole lobby, as the blocky figures
-     * are one draw call for everybody - and the nearest `remoteAvatars` of them within
-     * `remoteAvatarDistance` as their real avatar.
+     * Other players are drawn this far away - the whole lobby - and the nearest
+     * `remoteAvatars` of them within `remoteAvatarDistance` as their real Boxity avatar
+     * (anyone else as the blocky figure). On every preset that's everyone: a room holds
+     * 8, and a Boxity avatar is ~100 triangles and one draw call (plus one per worn
+     * item), so the 7 others cost less than one tire.
      */
     remoteDrawDistance: 150,
-    remoteAvatars: 3,
-    remoteAvatarDistance: 45,
+    remoteAvatars: 7,
+    remoteAvatarDistance: 150,
     remoteNameDistance: 40,
     /** World labels fade out past this. */
     labelDistance: 70,
@@ -54,8 +56,8 @@ export const PRESETS = {
     cloudCount: 14,
     maxTexture: 1024,
     remoteDrawDistance: 150,
-    remoteAvatars: 5,
-    remoteAvatarDistance: 60,
+    remoteAvatars: 7,
+    remoteAvatarDistance: 150,
     remoteNameDistance: 55,
     labelDistance: 110,
     decorDensity: 0.75,
@@ -75,7 +77,7 @@ export const PRESETS = {
     maxTexture: 1024,
     remoteDrawDistance: 150,
     remoteAvatars: 7,
-    remoteAvatarDistance: 80,
+    remoteAvatarDistance: 150,
     remoteNameDistance: 70,
     labelDistance: 150,
     decorDensity: 1,
@@ -93,20 +95,6 @@ function isMobileDevice() {
   return navigator.maxTouchPoints > 1 && /Macintosh/.test(ua)
 }
 
-/**
- * Picks a starting preset from the hardware. Deliberately pessimistic: the monitor can
- * only ever drop a level, so starting too high costs a few janky seconds, while
- * starting too low costs nothing.
- */
-export function detectQuality() {
-  if (typeof navigator === 'undefined') return 'MEDIUM'
-  const cores = navigator.hardwareConcurrency || 4
-  const memory = navigator.deviceMemory || 8
-  if (isMobileDevice() || cores <= 4) return 'LOW'
-  if (cores <= 8 || memory <= 4) return 'MEDIUM'
-  return 'HIGH'
-}
-
 function readSaved() {
   try {
     const saved = localStorage.getItem(STORAGE_KEY)
@@ -116,16 +104,28 @@ function readSaved() {
   }
 }
 
-const initialLevel = readSaved() || detectQuality()
+/**
+ * Everyone starts on LOW, the safe choice on any phone; players who want more pick it
+ * in Settings, and their choice is remembered on this device.
+ */
+export const DEFAULT_LEVEL = 'LOW'
+
+const initialLevel = readSaved() || DEFAULT_LEVEL
 
 export const useQuality = create((set, get) => ({
   level: initialLevel,
   /** True when the player picked the level by hand; auto-drop then stays out of it. */
   manual: readSaved() !== null,
   isMobile: isMobileDevice(),
-  /** Set once at startup: antialiasing can't change without recreating the context. */
+  /** Antialiasing can't change without recreating the WebGL context (see `rebuild`). */
   antialias: PRESETS[initialLevel].antialias,
   settings: PRESETS[initialLevel],
+  /**
+   * Bumped when the player picks a new level by hand: the 3D view is rebuilt from
+   * scratch, so things set when it's made (antialiasing, scenery density, tire detail)
+   * take the new level at once.
+   */
+  rebuild: 0,
 
   setLevel: (level, manual = true) => {
     if (!QUALITY_LEVELS.includes(level)) return
@@ -136,7 +136,13 @@ export const useQuality = create((set, get) => ({
         // Private mode: the choice just won't persist.
       }
     }
-    set({ level, manual, settings: PRESETS[level] })
+    const changed = level !== get().level
+    set((s) => ({
+      level,
+      manual,
+      settings: PRESETS[level],
+      ...(manual && changed ? { antialias: PRESETS[level].antialias, rebuild: s.rebuild + 1 } : {}),
+    }))
   },
 
   /** Called by the performance monitor when FPS stays under budget. */

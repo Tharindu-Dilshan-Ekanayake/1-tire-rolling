@@ -124,6 +124,20 @@ const calendar = svg(
   ]),
 )
 
+/** A chunky cog for Settings. */
+const settingsTeeth = Array.from({ length: 8 }, (_, i) => `<rect x="42" y="6" width="16" height="20" rx="4" transform="rotate(${i * 45} 50 50)"/>`).join('')
+const settings = svg(
+  `<g fill="url(#se-g)" stroke="${OUT}" stroke-width="5" stroke-linejoin="round">${settingsTeeth}<circle cx="50" cy="50" r="31"/></g>
+  <g fill="url(#se-g)">${settingsTeeth}</g>
+  <circle cx="50" cy="50" r="27" fill="url(#se-g)"/>
+  <circle cx="50" cy="50" r="12" fill="#2c344d" stroke="${OUT}" stroke-width="5"/>
+  <path d="M30 40c3-7 9-12 16-13" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" opacity=".7"/>`,
+  vgrad('se-g', [
+    [0, '#e8eef6'],
+    [1, '#9aa6b8'],
+  ]),
+)
+
 const star = svg(
   `<path d="M50 8l12 25 27 4-20 19 5 27-24-13-24 13 5-27-20-19 27-4z" fill="#ffffff" stroke="${OUT}" stroke-width="6" stroke-linejoin="round"/>`,
 )
@@ -274,6 +288,7 @@ export const ICON_SVGS = {
   store,
   calendar,
   star,
+  settings,
   heart,
   tire,
   potionWins,

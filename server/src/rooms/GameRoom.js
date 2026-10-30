@@ -139,6 +139,10 @@ export class GameRoom extends Room {
         return ok
       },
       onRoll: (result) => {
+        // Everyone else watches it as a ghost tire. Excluded by session id, not by the
+        // client object from the join: after a reconnect that object is stale, and the
+        // roller would get their own roll back as a second tire.
+        const self = this.clients.find((c) => c.sessionId === client.sessionId)
         this.broadcast(
           'ghostRoll',
           {
@@ -147,10 +151,11 @@ export class GameRoom extends Room {
             duration: result.duration,
             blocked: result.blocked,
             tireId: profile.equippedTire,
+            world: profile.world,
             x: player.x,
             z: player.z,
           },
-          { except: client },
+          self ? { except: self } : undefined,
         )
       },
     })
@@ -270,6 +275,7 @@ export class GameRoom extends Room {
     if (player.rebirths !== p.rebirths) player.rebirths = p.rebirths
     if (player.level !== p.level) player.level = p.level
     if (player.tireId !== p.equippedTire) player.tireId = p.equippedTire
+    if (player.world !== p.world) player.world = p.world
     const pets = p.equippedPets
       .map((uid) => p.pets.find((pet) => pet.uid === uid)?.id)
       .filter(Boolean)
@@ -361,7 +367,8 @@ export class GameRoom extends Room {
     }
     const look = JSON.stringify({
       equipped: clean(msg.equipped, (v) => (typeof v === 'string' && v.length <= 40) || (Number.isFinite(v) && Math.abs(v) < 1e12)),
-      proportions: clean(msg.proportions, (v) => Number.isFinite(v) && v > 0.2 && v < 3),
+      // Boxity's ranges: legOffsetX -0.7 to 5, armLength from 0.05, the rest within 0.3 to 2.6.
+      proportions: clean(msg.proportions, (v) => Number.isFinite(v) && v >= -1 && v <= 6),
     })
     if (look.length <= 2048 && look !== player.look) player.look = look
   }

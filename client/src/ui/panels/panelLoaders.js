@@ -11,6 +11,7 @@ export const PANEL_LOADERS = {
   offline: () => import('./WelcomeBackPanel'),
   store: () => import('./StorePanel'),
   leaderboards: () => import('./LeaderboardsPanel'),
+  settings: () => import('./SettingsPanel'),
 }
 
 /** Fetches every panel in the background, when the browser is idle. */

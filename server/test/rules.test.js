@@ -6,10 +6,15 @@ import {
   GEM_PRODUCTS,
   healthForLevel,
   levelCap,
+  nextRebirthGift,
+  rebirthGift,
   rebirthMultiplier,
   TIRES,
   TUTORIAL,
   WALL_STOP,
+  WORLD_PORTALS,
+  WORLD_ZONES,
+  WORLDS,
   ZONES,
 } from '../../shared/balance.js'
 import { formatDistance, formatNumber } from '../../shared/format.js'
@@ -30,9 +35,10 @@ import {
   rollOutcome,
   rollReach,
   skipRebirth,
+  usePortal,
 } from '../../shared/logic.js'
 import { PlayerSession } from '../../shared/session.js'
-import { PAD_X, padCenterZ, ROLL_ZONE, SPAWN } from '../../shared/world.js'
+import { PAD_X, padCenterZ, PORTALS, ROLL_ZONE, SPAWN } from '../../shared/world.js'
 
 const onPad = (i) => ({ x: PAD_X, y: 0.5, z: padCenterZ(i) })
 const inRollZone = () => ({ x: 0, y: 0, z: (ROLL_ZONE.minZ + ROLL_ZONE.maxZ) / 2 })
@@ -335,4 +341,98 @@ test('ads and Gems are granted by the host only, never by a client message', () 
   assert.equal(session.grantGemProduct('wins_big').ok, true)
   assert.ok(profile.wins > 0)
   assert.equal(count('reward'), 2)
+})
+
+// --- Rebirth gifts ---------------------------------------------------------------
+
+/** Straight to max level (training there takes too long this late). */
+function toCap(p) {
+  p.level = levelCap(p.rebirths)
+  p.health = healthForLevel(p.level)
+}
+
+test('every 5th rebirth from 15 gives Volcano eggs', () => {
+  assert.equal(rebirthGift(14), null)
+  assert.equal(rebirthGift(16), null)
+  assert.deepEqual([15, 20, 25, 35, 100].map((r) => rebirthGift(r).amount), [3, 3, 4, 5, 6])
+  assert.equal(nextRebirthGift(0).rebirths, 15)
+  assert.equal(nextRebirthGift(15).rebirths, 20)
+  assert.equal(nextRebirthGift(19).rebirths, 20)
+
+  const p = createProfile('a', 'A')
+  p.rebirths = 14
+  toCap(p)
+  const result = applyRebirth(p)
+  assert.equal(result.gift.rebirths, 15)
+  assert.equal(p.items.eggVolcano, 3)
+  toCap(p)
+  assert.equal(applyRebirth(p).gift, null, 'nothing at rebirth 16')
+  assert.equal(p.items.eggVolcano, 3)
+})
+
+test('a rebirth gift is announced to the player', () => {
+  const { session, profile, events } = makeSession(SPAWN)
+  profile.rebirths = 19
+  toCap(profile)
+  session.handle('rebirth', {}, 0)
+  const reward = events.find((e) => e.type === 'reward')
+  assert.match(reward.payload.label, /REBIRTH 20 GIFT: 3 Volcano Eggs/)
+})
+
+// --- World 2 ---------------------------------------------------------------------
+
+test('World 2 has its own sixty stages at the same gates, paying more', () => {
+  const [w1, w2] = WORLD_ZONES
+  assert.equal(w2.length, w1.length)
+  assert.equal(new Set(w2.map((z) => z.id)).size, w2.length, 'unique ids')
+  assert.ok(w2.every((z) => !w1.some((o) => o.name === z.name)), 'new names')
+  for (let i = 0; i < w1.length; i += 1) {
+    assert.equal(w2[i].start, w1[i].start)
+    assert.equal(w2[i].wall, w1[i].wall)
+    assert.equal(w2[i].discover, w1[i].discover * WORLDS[1].wins)
+  }
+})
+
+test('the portal opens at enough Wins, without spending them, and goes both ways', () => {
+  const p = createProfile('a', 'A')
+  assert.equal(usePortal(p).ok, false)
+  assert.equal(p.world, 0)
+  p.wins = WORLD_PORTALS.world2.wins
+  assert.deepEqual(usePortal(p), { ok: true, world: 1, first: true })
+  assert.equal(p.wins, WORLD_PORTALS.world2.wins, 'Wins kept')
+  assert.equal(usePortal(p).world, 0, 'back home')
+  p.wins = 0
+  assert.equal(usePortal(p).world, 1, 'open for good once unlocked')
+  const saved = normalizeProfile(JSON.parse(JSON.stringify(p)), 'a', 'A')
+  assert.equal(saved.world, 1)
+  assert.equal(saved.world2Unlocked, true)
+  assert.equal(normalizeProfile({ ...p, world2Unlocked: false }, 'a', 'A').world, 0, 'no World 2 without the unlock')
+})
+
+test('a roll in World 2 pays its multiplier and its own first-visit prizes', () => {
+  const one = createProfile('a', 'A')
+  const two = createProfile('b', 'B')
+  one.health = two.health = 5000
+  two.world = 1
+  two.world2Unlocked = true
+  const a = applyRoll(one, 0)
+  const b = applyRoll(two, 0)
+  assert.equal(b.distance, a.distance, 'same gates, same distance')
+  assert.ok(Math.abs(b.wins - a.wins * WORLDS[1].wins) <= WORLDS[1].wins, `${b.wins} vs ${a.wins}`)
+  assert.equal(b.prize, a.prize * WORLDS[1].wins)
+  assert.equal(two.stats.bestZone, 0, "World 1's discoveries untouched")
+  assert.ok(two.stats.bestZone2 > 0)
+})
+
+test('stepping into the portal switches world and tells the client', () => {
+  const portal = PORTALS[0]
+  const { session, profile, events } = makeSession({ x: portal.x, y: 0, z: portal.z })
+  session.handle('portal', {}, 0)
+  assert.equal(profile.world, 0, 'not enough Wins yet')
+  profile.wins = WORLD_PORTALS.world2.wins
+  session.handle('portal', {}, 0)
+  assert.equal(profile.world, 1)
+  assert.deepEqual(events.find((e) => e.type === 'world').payload, { world: 1, first: true })
+  session.handle('portal', {}, 0)
+  assert.equal(profile.world, 0)
 })

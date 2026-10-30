@@ -1,4 +1,4 @@
-import { EGGS, PADS, PETS, RARITIES, SHOP, TIRES, WORLD_PORTALS } from '@shared/balance'
+import { EGGS, PADS, PETS, RARITIES, SHOP, TIRES, WORLD_PORTALS, WORLDS } from '@shared/balance'
 import { formatNumber } from '@shared/format'
 import { isPadUnlocked } from '@shared/logic'
 import { EGG_STANDS, FREE_REWARD, PAD_HEIGHT, PAD_X, padCenterZ, PORTALS, SPHINX_STAND, TIRE_STANDS } from '@shared/world'
@@ -53,8 +53,8 @@ const padReserve = (index) => {
 export function padLabels(profile) {
   return PADS.map((pad, i) => ({
     id: `pad-${i}`,
-    // Above the tire spinning over the pad.
-    position: [PAD_X, PAD_HEIGHT + (pad.product ? 7.6 : 6.9), padCenterZ(i)],
+    // Over the pad, above a player bouncing on it.
+    position: [PAD_X, PAD_HEIGHT + (pad.product ? 6.6 : 5.9), padCenterZ(i)],
     spec: padLabelSpec(i, isPadUnlocked(profile, i)),
     reserve: padReserve(i),
     fade: 150,
@@ -172,21 +172,24 @@ const freeRewardLabel = () => ({
   fade: 90,
 })
 
-/** "WORLD 2" and the Wins needed. */
-const portalLabel = (portal) => ({
-  id: `portal-${portal.id}`,
-  position: [portal.x, portal.radius * 2 + 2.8, portal.z],
-  spec: {
-    lines: [
-      { text: 'WORLD 2', size: 60, gradient: TEXT.green },
-      { text: `Need ${formatNumber(WORLD_PORTALS[portal.id].wins)} Wins`, size: 42, icon: 'trophy', gradient: TEXT.white },
-    ],
-    pxPerUnit: 56,
-  },
-  fade: 140,
-})
+/** Where the portal goes: World 2 (and the Wins it needs, until it's open), or home. */
+const portalLabel = (profile) => (portal) => {
+  const home = profile.world === 1
+  const open = profile.world2Unlocked
+  const second = home
+    ? { text: 'Back to World 1', size: 42, gradient: TEXT.white }
+    : open
+      ? { text: `x${WORLDS[1].wins} Wins!`, size: 46, icon: 'trophy', gradient: TEXT.gold }
+      : { text: `Need ${formatNumber(WORLD_PORTALS[portal.id].wins)} Wins`, size: 42, icon: 'trophy', gradient: TEXT.white }
+  return {
+    id: `portal-${portal.id}`,
+    position: [portal.x, portal.radius * 2 + 2.8, portal.z],
+    spec: { lines: [{ text: home ? 'WORLD 1' : 'WORLD 2', size: 60, gradient: TEXT.green }, second], pxPerUnit: 56 },
+    fade: 140,
+  }
+}
 
 /** Every label in the lobby. */
 export function lobbyLabels(profile, { sphinxStock = 0 } = {}) {
-  return [...padLabels(profile), ...standLabels(profile), ...eggLabels(), sphinxLabel(sphinxStock), freeRewardLabel(), ...PORTALS.map(portalLabel)]
+  return [...padLabels(profile), ...standLabels(profile), ...eggLabels(), sphinxLabel(sphinxStock), freeRewardLabel(), ...PORTALS.map(portalLabel(profile))]
 }

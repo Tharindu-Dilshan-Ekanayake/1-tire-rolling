@@ -1,4 +1,4 @@
-import { EGGS, ITEMS, MULTI_HATCH, PADS, ROLL_TICK, SHOP, TIRES, TRAIN_INTERVAL, WALK_STEP, WORLD_PORTALS, ZONES } from './balance.js'
+import { EGGS, ITEMS, MULTI_HATCH, PADS, ROLL_TICK, SHOP, TIRES, TRAIN_INTERVAL, WALK_STEP, ZONES } from './balance.js'
 import {
   advanceTutorial,
   applyAdReward,
@@ -25,6 +25,7 @@ import {
   isPadUnlocked,
   skipRebirth,
   unequipPet,
+  usePortal,
   usePotion,
 } from './logic.js'
 import { eggStandNear, FREE_REWARD, inRect, inRollZone, MAX_MOVE_SPEED, onPad, portalAt, standRect, TIRE_STANDS } from './world.js'
@@ -59,6 +60,7 @@ const STAND_SLACK = 2
  * - 'hatch'    { eggId, pets: [{ uid, id }] }  pets to reveal
  * - 'badge'    { id, name }
  * - 'reward'   { label, wins? }  an ad reward or Gems purchase landed
+ * - 'world'    { world, first }  stepped through the portal into `world`
  *
  * `onRoll(result)` lets the host tell other players about a roll (ghost tires).
  */
@@ -148,12 +150,12 @@ export class PlayerSession {
 
     rebirth() {
       const result = applyRebirth(this.profile)
-      if (result.ok) this.afterRebirth()
+      if (result.ok) this.afterRebirth(result)
     },
 
     skipRebirth() {
       const result = skipRebirth(this.profile)
-      if (result.ok) this.afterRebirth()
+      if (result.ok) this.afterRebirth(result)
     },
 
     /** Rolls your tire: only from the ROLL ZONE, and not while one is still out. */
@@ -262,8 +264,12 @@ export class PlayerSession {
     portal() {
       const p = this.getPosition()
       const portal = portalAt(p.x, p.z, 2)
-      if (!portal || this.profile.wins < WORLD_PORTALS[portal.id].wins) return
-      this.badge(portal.id)
+      if (!portal) return
+      const result = usePortal(this.profile)
+      if (!result.ok) return
+      this.dirty = true
+      if (result.world === 1) this.badge(portal.id)
+      this.emit('world', { world: result.world, first: Boolean(result.first) })
     },
 
     usePotion({ itemId }, now) {
@@ -327,10 +333,12 @@ export class PlayerSession {
     this.badge('firstPet')
   }
 
-  afterRebirth() {
+  afterRebirth({ gift } = {}) {
     this.dirty = true
     this.tutorial('rebirth')
     if (this.profile.rebirths === 1) this.badge('firstRebirth')
+    // Every 5th rebirth from 15: eggs, waiting in Items.
+    if (gift) this.emit('reward', { label: `REBIRTH ${gift.rebirths} GIFT: ${gift.label} in Items` })
   }
 
   // --- Simulation ------------------------------------------------------------------
@@ -416,7 +424,7 @@ export class PlayerSession {
     }
     if (this.profile.settings.autoRebirth && isMaxLevel(this.profile)) {
       const rebirth = applyRebirth(this.profile)
-      if (rebirth.ok) this.afterRebirth()
+      if (rebirth.ok) this.afterRebirth(rebirth)
     }
   }
 

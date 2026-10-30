@@ -1,8 +1,9 @@
-import { MAX_EQUIPPED_PETS, TUTORIAL } from '@shared/balance'
+import { MAX_EQUIPPED_PETS } from '@shared/balance'
 import { rebirthProgress } from '@shared/logic'
 
 import { useGame } from '../../store/game'
 import Icon from '../Icon'
+import GiftTile from './GiftTile'
 import StrokeText from '../StrokeText'
 import { AlertBadge, ChunkyButton } from './parts'
 import { u } from './style'
@@ -15,7 +16,7 @@ const TILE_GRADIENTS = {
   store: 'linear-gradient(180deg, #c9ff96 0%, #6fe04a 50%, #26ad3c 100%)',
 }
 
-function MenuTile({ icon, label, onClick, alert, top, pointer }) {
+function MenuTile({ icon, label, onClick, alert, top }) {
   return (
     <ChunkyButton gradient={TILE_GRADIENTS[icon]} onClick={onClick} title={label} radius={20} className="flex-col" style={{ width: u(112), height: u(112) }}>
       <Icon name={icon} size={u(84)} style={{ marginTop: u(-10) }} />
@@ -30,36 +31,33 @@ function MenuTile({ icon, label, onClick, alert, top, pointer }) {
         </span>
       )}
       {alert && <AlertBadge size={40} style={{ top: u(-12), right: u(-14) }} />}
-      {pointer && <Icon name="arrowDown" size={u(70)} className="pp-bounce absolute" style={{ top: u(-100) }} />}
     </ChunkyButton>
   )
 }
 
-/** The 2x2 menu on the left, under the stats: Rebirth (with % to next), Pets, Items, Store. */
+/** The menu on the left, under the stats: Rebirth (with % to next), Pets, Items, Store, and the free Gift. */
 export function LeftMenu() {
   const togglePanel = useGame((s) => s.togglePanel)
   const rebirthPct = useGame((s) => Math.floor(rebirthProgress(s.profile) * 100))
   const petAlert = useGame((s) => s.profile.equippedPets.length < Math.min(MAX_EQUIPPED_PETS, s.profile.pets.length))
   const itemAlert = useGame((s) => Object.values(s.profile.items).some((n) => n > 0))
-  // Tutorial: point at Rebirth once the first one is available.
-  const pointAtRebirth = useGame((s) => TUTORIAL[s.profile.tutorialStep]?.event === 'rebirth' && rebirthProgress(s.profile) >= 1)
 
   return (
     <div
-      className="pointer-events-none absolute grid grid-cols-2"
-      style={{ left: u(18), top: u(380), gap: u(14), rowGap: u(30) }}
+      className="hud-menu pointer-events-none absolute grid grid-cols-2"
+      style={{ gap: u(14), rowGap: u(30) }}
     >
       <MenuTile
         icon="rebirth"
         label="Rebirth"
         top={`${rebirthPct}%`}
         alert={rebirthPct >= 100}
-        pointer={pointAtRebirth}
         onClick={() => togglePanel('rebirth')}
       />
       <MenuTile icon="pets" label="Pets" alert={petAlert} onClick={() => togglePanel('pets')} />
       <MenuTile icon="items" label="Items" alert={itemAlert} onClick={() => togglePanel('items')} />
       <MenuTile icon="store" label="Store" alert onClick={() => togglePanel('store')} />
+      <GiftTile />
     </div>
   )
 }

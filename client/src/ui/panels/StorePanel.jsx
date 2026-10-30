@@ -164,7 +164,7 @@ export function StorePanel() {
   const wins = useGame((s) => s.profile.wins)
   return (
     <Panel title="STORE" width={1080}>
-      <div className="flex flex-col" style={{ gap: u(18), maxHeight: '62vh', overflowY: 'auto', paddingRight: u(6) }}>
+      <div className="flex flex-col" style={{ gap: u(18) }}>
         <FreeSection />
         {SECTIONS.map((section) => (
           <div key={section.title}>

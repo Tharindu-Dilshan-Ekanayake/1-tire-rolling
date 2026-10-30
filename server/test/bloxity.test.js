@@ -253,3 +253,42 @@ test('guest progress carries into a new account once', async () => {
   assert.equal(await carryOverGuest('acc7', ['guest-g2'], 'Seven'), null)
   assert.equal(await carryOverGuest('acc10', ['guest-g2'], 'Ten'), 'guest-g2', 'still unused, so still available')
 })
+
+// --- Open Rooms reporter -----------------------------------------------------------
+
+test('the room reporter posts this pod\'s rooms to Boxity, and only when configured', async () => {
+  const { installRoomReporter } = await import('../src/legionRoomReporter.js')
+  const realFetch = globalThis.fetch
+  const saved = { ...process.env }
+  const calls = []
+  const query = async () => [
+    { roomId: 'abc', name: 'game', clients: 3, maxClients: 8, locked: false, private: false, metadata: { players: 3 } },
+    { roomId: 'XYZ12', name: 'game', clients: 1, maxClients: 8, locked: false, private: true, metadata: {} },
+  ]
+  globalThis.fetch = async (url, init) => {
+    calls.push({ url, init })
+    return { ok: true }
+  }
+  try {
+    delete process.env.MATCHMAKER_REPORT_URL
+    installRoomReporter({ query })()
+    await new Promise((r) => setTimeout(r, 10))
+    assert.equal(calls.length, 0, 'nothing without the platform variables')
+
+    Object.assign(process.env, { MATCHMAKER_REPORT_URL: 'https://mm.test/report/', BLOXITY_REPORT_TOKEN: 'tok', BLOXITY_GAME_ID: 'tire', POD_NAME: 'pod-1' })
+    const stop = installRoomReporter({ intervalMs: 60000, query })
+    await new Promise((r) => setTimeout(r, 10))
+    stop()
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].url, 'https://mm.test/report/tire/rooms')
+    assert.equal(calls[0].init.headers.authorization, 'Bearer tok')
+    const body = JSON.parse(calls[0].init.body)
+    assert.equal(body.podName, 'pod-1')
+    assert.equal(body.players, 4)
+    assert.deepEqual(body.rooms[0], { colyseusRoomId: 'abc', name: 'game', clients: 3, maxClients: 8, locked: false, private: false, started: false, metadata: { players: 3 } })
+    assert.equal(body.rooms[1].private, true)
+  } finally {
+    globalThis.fetch = realFetch
+    process.env = saved
+  }
+})

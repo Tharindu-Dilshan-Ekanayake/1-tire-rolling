@@ -1,4 +1,4 @@
-import { TIRES } from '@shared/balance'
+import { TIRES, TUTORIAL, WORLDS } from '@shared/balance'
 import { formatNumber } from '@shared/format'
 
 import { sfx } from '../audio/sfx'
@@ -6,6 +6,8 @@ import { burst, queueTrainFx } from '../game/fx/fxQueue'
 import { runtime } from '../game/runtime'
 import { beginRoll, roll } from '../game/roll/rollControl'
 import { getGame } from '../store/game'
+import { fadeThrough } from '../ui/fade'
+import { refreshRemoteWorlds } from './remotePlayers'
 
 /** A point above wherever you're watching: you in the lobby, or your rolling tire. */
 const atPlayer = (dy = 1.2) => {
@@ -23,6 +25,7 @@ export function handleServerEvent(type, payload) {
     case 'profile': {
       const before = game.profile
       game.setProfile(payload.profile, payload.session)
+      if ((payload.profile.world || 0) !== (before.world || 0)) refreshRemoteWorlds()
       // Celebrate the big moments, whatever caused them.
       if (game.profileLoaded && payload.profile.rebirths > before.rebirths) {
         sfx.rebirth()
@@ -33,7 +36,9 @@ export function handleServerEvent(type, payload) {
         sfx.wins()
         burst({ ...atPlayer(2.5), count: 60, palette: 'confetti', speed: 9 })
         const tire = TIRES.find((t) => t.id === payload.profile.equippedTire)
-        if (tire) game.showToast(`NEW TIRE: ${tire.name}!`)
+        // The first tire bought ends the tutorial: say so too.
+        const done = before.tutorialStep < TUTORIAL.length && payload.profile.tutorialStep >= TUTORIAL.length
+        if (tire) game.showToast(`NEW TIRE: ${tire.name}!${done ? ' Tutorial complete - have fun!' : ''}`)
       }
       break
     }
@@ -79,6 +84,17 @@ export function handleServerEvent(type, payload) {
     case 'badge':
       sfx.wins()
       break
+
+    case 'world': {
+      // Through the portal: a flash of white while the new world's sky and track go
+      // in (GameScene follows profile.world), and a fanfare.
+      fadeThrough(() => {})
+      sfx.rebirth()
+      burst({ ...atPlayer(2), count: 60, palette: 'confetti', speed: 9 })
+      const world = WORLDS[payload.world]
+      game.showToast(payload.world === 1 ? `WELCOME TO ${world.name.toUpperCase()}! x${world.wins} Wins on every roll!` : `Back in ${world.name}!`)
+      break
+    }
 
     case 'reward':
       // A rewarded ad or a Gems purchase landed.

@@ -12,12 +12,16 @@ import { useEffect, useRef } from 'react'
 export function PerfProbe() {
   const gl = useThree((s) => s.gl)
   const scene = useThree((s) => s.scene)
+  const camera = useThree((s) => s.camera)
   const acc = useRef({ frames: 0, since: 0, maxCalls: 0, maxTriangles: 0 })
 
-  // With ?debug, the scene too, for the automated texture-memory audit.
+  // With ?debug, the scene and camera too, for the automated texture-memory audit and
+  // close-up screenshots (set runtime.camera.mode to anything else to steer it).
   useEffect(() => {
-    if (window.__pp) window.__ppScene = scene
-  }, [scene])
+    if (!window.__pp) return
+    window.__ppScene = scene
+    window.__ppCamera = camera
+  }, [scene, camera])
 
   useFrame(() => {
     const info = gl.info

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef } from 'react'
 
+import { TUTORIAL } from '@shared/balance'
+
 import { sfx } from '../../audio/sfx'
 import { actions } from '../../net/actions'
 import { useGame } from '../../store/game'
@@ -23,6 +25,8 @@ export function RollButton() {
   const visible = useGame((s) => s.zone.rollZone && !s.roll && !s.rollResult && !s.panel)
   const ownsAuto = useGame((s) => Boolean(s.profile.passes.autoRoll))
   const autoOn = useGame((s) => Boolean(s.profile.passes.autoRoll && s.profile.settings.autoRoll))
+  // The bouncing arrow over it is for the tutorial's roll step only.
+  const pointAt = useGame((s) => TUTORIAL[s.profile.tutorialStep]?.event === 'roll')
   const lastPress = useRef(-Infinity)
 
   const press = useCallback(() => {
@@ -53,7 +57,7 @@ export function RollButton() {
   if (!visible) return null
   return (
     <div className="pointer-events-none absolute left-1/2 flex -translate-x-1/2 flex-col items-center" style={{ bottom: u(300) }}>
-      <Icon name="arrowDown" size={u(80)} className="pp-bounce" style={{ marginBottom: u(8) }} />
+      {pointAt && <Icon name="arrowDown" size={u(80)} className="pp-bounce" style={{ marginBottom: u(8) }} />}
       <ChunkyButton gradient={GRADIENTS.greenButton} onClick={press} title="Roll!" radius={12} border={6} className="pp-roll-btn" style={{ width: u(360), height: u(104), gap: u(10) }}>
         <Icon name="tire" size={u(84)} />
         <span style={{ fontSize: u(76) }}>
