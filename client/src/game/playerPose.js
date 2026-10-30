@@ -152,6 +152,44 @@ function launching(t, time) {
   prone(time, 0, smooth(0.8, 1, t))
 }
 
+/**
+ * Where in the kick (0-1) the foot meets the tire: the tire sets off at that moment
+ * (roll/path.js, KICK_HIT).
+ */
+export const KICK_IMPACT = 0.52
+
+/**
+ * Kicking the tire off, `t` 0..1: weight shifts onto the left leg, the right leg swings
+ * back with the knee folded and the body leans away, then it whips forward and the
+ * knee straightens as the foot meets the tire (at KICK_IMPACT), the body leaning into
+ * it with the arms thrown out for balance, and the leg follows through before settling.
+ */
+function kickPose(t, w) {
+  const wind = smooth(0, KICK_IMPACT - 0.1, t) * (1 - smooth(KICK_IMPACT - 0.1, KICK_IMPACT, t))
+  const strike = smooth(KICK_IMPACT - 0.1, KICK_IMPACT, t) * (1 - smooth(0.72, 1, t))
+  const plant = smooth(0, 0.3, t) * (1 - smooth(0.85, 1, t))
+  // The kicking leg: back and bent, then forward and straight.
+  add('LegR1', 0.95, 0.04 * OUT_R, 0, wind * w)
+  add('LegR2', 1.6, 0, 0, wind * w)
+  add('LegR1', -1.4, 0.04 * OUT_R, 0, strike * w)
+  add('LegR2', 0.15, 0, 0, strike * w)
+  // The planted leg bends a little to take the weight.
+  add('LegL1', -0.14, 0.05 * OUT_L, 0, plant * w)
+  add('LegL2', 0.34, 0, 0, plant * w)
+  // Body: back, then into it.
+  add('Spine1', 0.14, 0, 0, wind * w)
+  add('Spine1', -0.32, 0, -0.18, strike * w)
+  add('Neck1', -0.12, 0, 0, strike * w)
+  // Arms swing against the leg and fling out for balance.
+  add('ArmL1', 0.5, 0.3 * OUT_L, 0, wind * w)
+  add('ArmR1', -0.5, 0.3 * OUT_R, 0, wind * w)
+  add('ArmL1', -0.9, 0.45 * OUT_L, 0, strike * w)
+  add('ArmR1', 0.7, 0.45 * OUT_R, 0, strike * w)
+  add('ArmL2', -0.3, 0, 0, plant * w)
+  add('ArmR2', -0.3, 0, 0, plant * w)
+  pose.lift += (-0.04 * wind + 0.06 * strike) * w
+}
+
 /** In the air off a ramp: arms flung out like wings, legs kicking apart. */
 function flying(time, w) {
   const flap = Math.sin(time * 9) * 0.12
@@ -184,7 +222,7 @@ function cheering(time, w) {
 /**
  * @param {{ time?: number, speed?: number, maxSpeed?: number, grounded?: boolean,
  *   vy?: number, stride?: number, sliding?: boolean, launch?: number, stand?: number,
- *   air?: number, emote?: string|null }} motion
+ *   air?: number, kick?: number, emote?: string|null }} motion
  *   `sliding` lies the body down on the board; `speed` is then the slide's speed.
  *   While sliding, `launch` (0-1) is the dive onto the board, `air` (0-1) how far into
  *   a jump's pose, and `stand` (0-1) getting up to celebrate at the end.
@@ -205,6 +243,7 @@ export function computePose(motion) {
     launch = 1,
     stand = 0,
     air = 0,
+    kick = -1,
   } = motion
   for (const name of POSED_BONES) {
     const b = pose.bones[name]
@@ -223,7 +262,14 @@ export function computePose(motion) {
     }
     return pose
   }
-  if (grounded) {
+  // Kicking the tire off (`kick` 0-1 through the kick, below 0 or above 1 for none):
+  // eased in and out over the stance.
+  const kicking = kick >= 0 && kick <= 1
+  const kickWeight = kicking ? smooth(0, 0.1, kick) * (1 - smooth(0.9, 1, kick)) : 0
+  if (kicking) {
+    stance(1 - kickWeight, time)
+    kickPose(kick, kickWeight)
+  } else if (grounded) {
     const ratio = clamp01(speed / Math.max(maxSpeed, 0.001))
     stance(1 - smooth(0.05, 0.4, ratio), time)
     if (ratio > 0.02) stride(phase, ratio)

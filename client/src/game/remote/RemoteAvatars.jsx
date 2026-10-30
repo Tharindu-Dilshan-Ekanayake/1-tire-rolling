@@ -2,8 +2,11 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { Suspense, useEffect, useRef, useState } from 'react'
 import { Vector3 } from 'three'
 
+import { ROLL_LAUNCH } from '@shared/balance'
+
 import { remotePlayers } from '../../net/remotePlayers'
 import { getQuality } from '../../store/quality'
+import { runtime } from '../runtime'
 import { emoteFromAnim } from '../../bloxity/emotes'
 import { padBounce, padTireTop } from '../padBounce'
 import { BloxityAvatar } from '../PlayerAvatar'
@@ -13,6 +16,8 @@ import { tireWidth } from '../tire'
 const PICK_MS = 500
 /** Top walking speed: full stride amplitude, as for your own character. */
 const MAX_SPEED = 10.875
+/** Facing down the track, as your own character does to kick off a roll. */
+const TRACK_YAW = Math.PI
 /** Training on a pad, facing out over the plaza, as your own character does. */
 const PAD_YAW = Math.PI / 2
 const bounce = { height: 0, vy: 0, squash: 0 }
@@ -39,9 +44,15 @@ function RemoteAvatar({ sessionId, look }) {
     m.time += delta
 
     const running = r.anim === 'run'
+    // Rolling: they kick their tire off from the roll zone (the ghost tire waits for the
+    // foot, then goes - roll/Roll.jsx), squared up to the track.
+    const ghost = runtime.ghostRolls.get(sessionId)
+    const sinceRoll = ghost ? (performance.now() - ghost.startedAt) / 1000 : -1
+    const kicking = sinceRoll >= 0 && sinceRoll < ROLL_LAUNCH
+    m.kick = kicking ? sinceRoll / ROLL_LAUNCH : -1
     group.visible = true
     group.position.copy(r.position)
-    group.quaternion.setFromAxisAngle(_up, running ? PAD_YAW : r.yaw)
+    group.quaternion.setFromAxisAngle(_up, kicking ? TRACK_YAW : running ? PAD_YAW : r.yaw)
     if (running) {
       padBounce(_state.clock.elapsedTime, bounce)
       group.position.y += padTireTop(tireWidth(r.tireId)) * (1 - 0.15 * bounce.squash) + bounce.height

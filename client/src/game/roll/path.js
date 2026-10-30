@@ -3,6 +3,8 @@ import { Euler, Quaternion, Vector3 } from 'three'
 import { ROLL_LAUNCH, WALL_STOP, ZONES } from '@shared/balance'
 import { SLOPE_ANGLE, TRACK_START_Z } from '@shared/world'
 
+import { KICK_IMPACT } from '../playerPose'
+
 /**
  * Geometry of the track: one long, straight canyon running north from the plaza's
  * edge, dropping downhill at SLOPE_ANGLE.
@@ -157,8 +159,17 @@ function timeAtMeter(m, t, from, to, duration, crash) {
 
 // --- A whole roll --------------------------------------------------------------------
 
-/** The tire pops out this far ahead of you and sets off from there. */
-export const PUSH_AHEAD = 3.6
+/**
+ * The tire waits this far ahead of you - its near edge about a leg's length away - and
+ * sets off from there when you kick it.
+ */
+export const PUSH_AHEAD = 2.3
+/**
+ * Seconds into a roll that the kick lands and the tire sets off: the player winds up
+ * and swings (playerPose.kickPose, over ROLL_LAUNCH), and the tire stays put until the
+ * foot meets it. The roll's total time is the authority's, so the glide runs from here.
+ */
+export const KICK_HIT = ROLL_LAUNCH * KICK_IMPACT
 /** A tire that hits a wall it can't break stops dead and shatters this long before the roll's end. */
 const BOUNCE_TIME = 0.5
 /**
@@ -218,7 +229,7 @@ export const toppleSide = (distance) => (Math.floor(distance) % 2 === 0 ? 1 : -1
 export function rideState(elapsed, ride, lane, out) {
   const start = ride.fromMeter + PUSH_AHEAD
   const crash = ride.blocked > 0
-  const rideTime = ride.duration - ROLL_LAUNCH
+  const rideTime = ride.duration - KICK_HIT
   // A crash reaches the wall's face a bounce early, then bounces back to `distance`.
   const glideTime = crash ? rideTime - BOUNCE_TIME : rideTime
   const impact = crash ? ride.distance + WALL_STOP - WALL_THICK / 2 - TIRE_SIZE : ride.distance
@@ -231,11 +242,12 @@ export function rideState(elapsed, ride, lane, out) {
   out.airborne = false
   out.crashed = false
   out.topple = 0
-  if (elapsed < ROLL_LAUNCH) {
+  if (elapsed < KICK_HIT) {
+    // Waiting for the kick.
     out.phase = 'launch'
-    out.launch = clamp01(elapsed / ROLL_LAUNCH)
+    out.launch = clamp01(elapsed / KICK_HIT)
   } else {
-    const t = elapsed - ROLL_LAUNCH
+    const t = elapsed - KICK_HIT
     out.launch = 1
     out.phase = t >= rideTime ? 'stopped' : 'ride'
     if (t < glideTime) {

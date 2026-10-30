@@ -11,6 +11,7 @@ import ErrorBoundary from '../ui/ErrorBoundary'
 import FallbackAvatar from './FallbackAvatar'
 import { PAD_FLAT, PAD_TIRE_SIZE, padBounce, padTireTop } from './padBounce'
 import PlayerAvatar from './PlayerAvatar'
+import { ROLL_LAUNCH } from '@shared/balance'
 import { PUSH_AHEAD, TIRE_SIZE } from './roll/path'
 import { roll } from './roll/rollControl'
 import { runtime } from './runtime'
@@ -144,7 +145,9 @@ export function Player({ onAvatarReady }) {
     // --- Ready to roll: your tire waits upright in front of you on the ROLL ZONE ---
     if (t) {
       const waiting = getGame().zone.rollZone && !player.frozen && !roll.active
-      ready.current = waiting ? Math.min(1, ready.current + delta * 4) : Math.max(0, ready.current - delta * 6)
+      // Pressing ROLL swaps it for the rolling tire at once (Roll.jsx), in the same spot.
+      if (roll.active) ready.current = 0
+      else ready.current = waiting ? Math.min(1, ready.current + delta * 4) : Math.max(0, ready.current - delta * 6)
       t.visible = ready.current > 0
       if (t.visible) {
         const time = state.clock.elapsedTime
@@ -280,6 +283,9 @@ export function Player({ onAvatarReady }) {
     // On a pad the pose follows the bounce: legs tucked in the air, landing on the tire.
     motion.grounded = running ? bounce.height < 0.12 : player.grounded
     motion.vy = running ? bounce.vy : vy.current
+    // Kicking the tire off when you press ROLL: how far through the kick (below 0: not).
+    const sinceRoll = roll.active ? (performance.now() - roll.startedAt) / 1000 : -1
+    motion.kick = sinceRoll >= 0 && sinceRoll < ROLL_LAUNCH ? sinceRoll / ROLL_LAUNCH : -1
     // Steps quicken with speed: the stride phase runs faster rather than jumping.
     motion.stride += delta * (5 + 6 * Math.min(1, shownSpeed / WALK_SPEED))
   })

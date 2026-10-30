@@ -226,6 +226,10 @@ const zoneNameGradients = perWorld((zs) =>
     return `linear-gradient(180deg, ${a} 0%, ${b} 45%, ${c} 100%)`
   }),
 )
+/** The waiting tire on the roll zone is this much of full size (Player.jsx's READY_SIZE). */
+const READY_RATIO = 0.85
+/** Sideways, in metres, the camera starts for the kick (and swings back from). */
+const KICK_CAM_SIDE = 3.4
 /** How far in front of its gate's board a stage sign floats (see the gate signs). */
 const GATE_SIGN_AHEAD = 4.5
 /** Stage themes under a night sky full of stars. */
@@ -304,9 +308,12 @@ function applySquash(m, at, squash) {
   return m.premultiply(_toCentre.makeTranslation(at.x, at.y, at.z))
 }
 
-/** How squashed your tire is now: a landing or a wall hit, springing back over ~0.35 s. */
+/**
+ * How squashed your tire is now: a landing, a wall hit or the kick, springing back over
+ * ~0.35 s.
+ */
 function tireSquash(now) {
-  const since = now - Math.max(roll.landedAt, roll.hitAt)
+  const since = now - Math.max(roll.landedAt, roll.hitAt, roll.kickedAt)
   if (since < 0 || since > 350) return 0
   // A quick flatten, then a little overshoot - a bouncy toy, not a stiff wheel.
   return 0.28 * Math.exp(-since / 90) * Math.cos(since / 55)
@@ -589,18 +596,22 @@ export default function Roll() {
           // along the track (at warp speed any lag leaves it hundreds of metres behind);
           // eased sideways so the weaving stays smooth, and eased in from the lobby
           // camera - close for the push, pulling back once it's off.
-          const off = smoothstep(0.5, 1.4, elapsed)
-          const behind = 8.5 + 2.5 * off + Math.min(speed, 300) * 0.006
-          trackPoint(roll.meter - behind, 0, 4.6 + 0.8 * off + roll.air * 0.85, _cam)
-          const easingIn = elapsed < 1
+          //
+          // For the kick it starts close and to one side, looking at the player's foot
+          // and the tire, so you see it; then it swings in behind and pulls back as the
+          // tire goes.
+          const off = smoothstep(0.55, 1.5, elapsed)
+          const behind = 5.4 + 5.6 * off + Math.min(speed, 300) * 0.006
+          trackPoint(roll.meter - behind, 0, 3.2 + 2.2 * off + roll.air * 0.85, _cam)
+          const easingIn = elapsed < 1.1
           const kIn = easingIn ? 1 - Math.exp(-8 * delta) : 1
           const kx = easingIn ? kIn : 1 - Math.exp(-5 * delta)
           camBase.set(
-            camBase.x + (p.x * 0.7 - camBase.x) * kx,
+            camBase.x + (p.x * 0.7 + KICK_CAM_SIDE * (1 - off) - camBase.x) * kx,
             camBase.y + (_cam.y - camBase.y) * kIn,
             camBase.z + (_cam.z - camBase.z) * kIn,
           )
-          trackPoint(roll.meter + 16, p.x * 0.85, 2 + roll.air * 0.9, _look)
+          trackPoint(roll.meter + 3 + 13 * off, p.x * 0.85, 1.4 + 0.6 * off + roll.air * 0.9, _look)
         }
         // Shake: a rumble that grows with speed, and a jolt on landings and wall hits.
         const sinceLand = now - Math.max(roll.landedAt, roll.hitAt)
@@ -668,7 +679,9 @@ export default function Roll() {
       // It pops out in front of you, then sets off; once it shatters on a gate it's
       // only pieces (Walls.jsx).
       if (roll.active && !roll.crashed) {
-        const pop = roll.phase === 'launch' ? Math.min(1, roll.launch / 0.35) : 1
+        // The waiting tire on the roll zone (Player.jsx) is a little smaller: swell to full size
+        // while the leg swings back.
+        const pop = roll.phase === 'launch' ? READY_RATIO + (1 - READY_RATIO) * Math.min(1, roll.launch / 0.4) : 1
         n = placeTire(tires, n, roll, roll.tireId, pop, tireSquash(now))
       }
       for (const [sid, ride] of runtime.ghostRolls) {

@@ -308,6 +308,17 @@ export const sfx = {
     tone(220, { type: 'triangle', duration: 0.32, volume: 0.09, slideTo: 660 })
     bell(1319, { at: 0.2, volume: 0.05, decay: 0.3 })
   },
+  /** The leg swinging back and through, just before the kick lands: a quick swish. */
+  kickSwing() {
+    if (ready('kickSwing', 200)) noise({ duration: 0.22, volume: 0.1, from: 600, to: 2200, q: 0.7 })
+  },
+  /** The foot meeting the tire: a fat thump and a squeak of rubber. */
+  kick() {
+    if (!ready('kick', 200)) return
+    tone(130, { duration: 0.2, volume: 0.28, slideTo: 48 })
+    noise({ duration: 0.07, volume: 0.3, from: 1800, to: 500, q: 0.8 })
+    tone(900, { type: 'triangle', at: 0.01, duration: 0.09, volume: 0.07, slideTo: 420 })
+  },
   /** The tire popping out in front of you when you press ROLL: a springy bloop. */
   tirePop() {
     if (!ready('tirePop', 200)) return

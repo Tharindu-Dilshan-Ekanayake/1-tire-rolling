@@ -60,7 +60,7 @@ function emit(pieces, st, count, spread, lift, back) {
  */
 export function RollFX() {
   const sprayRef = useRef(null)
-  const state = useRef({ next: 0, owed: 0, landedSeen: 0, popped: false, stoppedSeen: false })
+  const state = useRef({ next: 0, owed: 0, landedSeen: 0, kickSeen: 0, stoppedSeen: false })
 
   const assets = useMemo(() => {
     const pieces = createBoxInstances(SPRAY, sharedMaterials().toy, STYLE.SMOOTH)
@@ -86,12 +86,13 @@ export function RollFX() {
 
     if (roll.active && on) {
       if (roll.phase === 'launch') {
-        // The tire popping out kicks up a little puff.
-        if (!st.popped && roll.launch > 0.05) {
-          st.popped = true
-          emit(pieces, st, 10, 2.2, 2.5, 0.5)
-        }
+        // Waiting for the kick.
       } else if (roll.phase === 'ride' && !roll.crashed) {
+        // The kick lands: a burst of dust from under the tire as it goes.
+        if (roll.kickedAt !== st.kickSeen) {
+          st.kickSeen = roll.kickedAt
+          emit(pieces, st, 16, 3.2, 3, 5)
+        }
         if (!roll.airborne && roll.speed > 6) {
           st.owed += delta * Math.min(50, roll.speed * 0.4)
           const n = Math.floor(st.owed)
@@ -107,7 +108,6 @@ export function RollFX() {
         emit(pieces, st, 22, 5, 3.5, 1)
       }
     } else if (!roll.active) {
-      st.popped = false
       st.stoppedSeen = false
       st.owed = 0
     }

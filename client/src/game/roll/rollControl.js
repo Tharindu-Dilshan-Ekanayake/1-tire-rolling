@@ -1,4 +1,3 @@
-import { ROLL_LAUNCH } from '@shared/balance'
 import { formatNumber } from '@shared/format'
 import { ROLL_RETURN } from '@shared/world'
 
@@ -8,7 +7,7 @@ import { fadeThrough } from '../../ui/fade'
 import { burst } from '../fx/fxQueue'
 import { runtime } from '../runtime'
 import { zones } from '../worldLook'
-import { createRideState, meterAtZ, rideState } from './path'
+import { createRideState, KICK_HIT, meterAtZ, rideState } from './path'
 
 /**
  * How long the "+N Wins" result shows over your stopped tire before you're back: long
@@ -53,6 +52,8 @@ export const roll = {
   landedAt: 0,
   tookOffAt: 0,
   hitAt: 0,
+  /** performance.now() when the kick landed and the tire set off. */
+  kickedAt: 0,
   frameKey: -1,
   /**
    * Slow motion: ms the roll's clock is behind real time. Every wall smashed slows the
@@ -87,6 +88,7 @@ export function advanceRoll(clockTime) {
   const now = performance.now()
   const wasAirborne = roll.airborne
   const wasCrashed = roll.crashed
+  const wasWaiting = roll.phase === 'launch'
   const wasToppled = roll.topple
   const dt = roll.lastNow ? Math.min(now - roll.lastNow, 100) : 0
   roll.lastNow = now
@@ -96,6 +98,7 @@ export function advanceRoll(clockTime) {
   const left = roll.duration - (now - roll.startedAt) / 1000
   roll.lag = Math.min(roll.lag, Math.max(0, left - 0.5) * 400)
   rideState((now - roll.startedAt - roll.lag) / 1000, roll, 0, roll)
+  if (wasWaiting && roll.phase !== 'launch') roll.kickedAt = now
   if (!wasAirborne && roll.airborne) {
     roll.tookOffAt = now
     sfx.jumpWhoosh()
@@ -135,12 +138,15 @@ export function beginRoll(result) {
     landedAt: 0,
     tookOffAt: 0,
     hitAt: 0,
+    kickedAt: 0,
     frameKey: -1,
     lag: 0,
     lastNow: 0,
   })
   rideState(0, roll, 0, roll)
   runtime.player.frozen = true
+  // Square up to the tire and the track, ready to kick it.
+  runtime.player.yaw = Math.PI
   runtime.camera.mode = 'roll'
   game.startRoll({
     distance: result.distance,
@@ -151,7 +157,14 @@ export function beginRoll(result) {
     best: result.best,
   })
 
-  timers.push(setTimeout(() => sfx.rollStart(), ROLL_LAUNCH * 1000))
+  // The wind-up's swish, then the foot meets the tire: a thump, and off it goes.
+  sfx.kickSwing()
+  timers.push(
+    setTimeout(() => {
+      sfx.kick()
+      sfx.rollStart()
+    }, KICK_HIT * 1000),
+  )
   if (!(result.blocked > 0)) {
     timers.push(setTimeout(() => sfx.rollStop(), Math.max(0, result.duration - SKID_SOUND_LEAD) * 1000))
   }
