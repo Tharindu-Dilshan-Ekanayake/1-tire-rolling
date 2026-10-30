@@ -229,7 +229,7 @@ const zoneNameGradients = perWorld((zs) =>
 /** The waiting tire on the roll zone is this much of full size (Player.jsx's READY_SIZE). */
 const READY_RATIO = 0.85
 /** Sideways, in metres, the camera starts for the kick (and swings back from). */
-const KICK_CAM_SIDE = 3.4
+const KICK_CAM_SIDE = 4.4
 /** How far in front of its gate's board a stage sign floats (see the gate signs). */
 const GATE_SIGN_AHEAD = 4.5
 /** Stage themes under a night sky full of stars. */
@@ -601,8 +601,8 @@ export default function Roll() {
           // and the tire, so you see it; then it swings in behind and pulls back as the
           // tire goes.
           const off = smoothstep(0.55, 1.5, elapsed)
-          const behind = 5.4 + 5.6 * off + Math.min(speed, 300) * 0.006
-          trackPoint(roll.meter - behind, 0, 3.2 + 2.2 * off + roll.air * 0.85, _cam)
+          const behind = 8 + 3.6 * off + Math.min(speed, 300) * 0.006
+          trackPoint(roll.meter - behind, 0, 4.6 + 0.8 * off + roll.air * 0.85, _cam)
           const easingIn = elapsed < 1.1
           const kIn = easingIn ? 1 - Math.exp(-8 * delta) : 1
           const kx = easingIn ? kIn : 1 - Math.exp(-5 * delta)
@@ -611,7 +611,7 @@ export default function Roll() {
             camBase.y + (_cam.y - camBase.y) * kIn,
             camBase.z + (_cam.z - camBase.z) * kIn,
           )
-          trackPoint(roll.meter + 3 + 13 * off, p.x * 0.85, 1.4 + 0.6 * off + roll.air * 0.9, _look)
+          trackPoint(roll.meter - 0.6 + 16.6 * off, p.x * 0.85, 1.7 + 0.3 * off + roll.air * 0.9, _look)
         }
         // Shake: a rumble that grows with speed, and a jolt on landings and wall hits.
         const sinceLand = now - Math.max(roll.landedAt, roll.hitAt)
