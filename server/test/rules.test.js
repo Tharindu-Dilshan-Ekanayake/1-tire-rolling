@@ -1,263 +1,438 @@
 import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
-import { BOARDS, EGGS, levelCap, rebirthMultiplier, SHOP, slideForLevel, TUTORIAL, WORLD_PORTALS } from '../../shared/balance.js'
-import { formatNumber } from '../../shared/format.js'
 import {
+  AD_REWARDS,
+  GEM_PRODUCTS,
+  healthForLevel,
+  levelCap,
+  nextRebirthGift,
+  rebirthGift,
+  rebirthMultiplier,
+  TIRES,
+  TUTORIAL,
+  WALL_STOP,
+  WORLD_PORTALS,
+  WORLD_ZONES,
+  WORLDS,
+  ZONES,
+} from '../../shared/balance.js'
+import { formatDistance, formatNumber } from '../../shared/format.js'
+import {
+  applyAdReward,
+  applyGemProduct,
   applyRebirth,
-  applySlide,
+  applyRoll,
   applyTrain,
-  buyBoard,
-  buySlidePack,
+  buyHealthPack,
+  buyTire,
   createProfile,
-  dailyStatus,
-  hatchEgg,
+  createSession,
+  healthPacks,
   levelFor,
   normalizeProfile,
+  rebirthSkipPrice,
+  rollOutcome,
+  rollReach,
   skipRebirth,
-  slideDistance,
-  slidePacks,
+  usePortal,
 } from '../../shared/logic.js'
 import { PlayerSession } from '../../shared/session.js'
-import { BELT_FAR_X, BELT_NEAR_X, BOARD_PADS, isSlideReturn, PORTALS, SLIDE_RETURN, SLIDE_ZONE, SPAWN, treadmillCenterZ } from '../../shared/world.js'
+import { PAD_X, padCenterZ, PORTALS, ROLL_ZONE, SPAWN } from '../../shared/world.js'
 
-const onBelt = (i) => ({ x: (BELT_NEAR_X + BELT_FAR_X) / 2, y: 0.5, z: treadmillCenterZ(i) })
-const inZone = () => ({ x: 0, y: 0, z: (SLIDE_ZONE.minZ + SLIDE_ZONE.maxZ) / 2 })
+const onPad = (i) => ({ x: PAD_X, y: 0.5, z: padCenterZ(i) })
+const inRollZone = () => ({ x: 0, y: 0, z: (ROLL_ZONE.minZ + ROLL_ZONE.maxZ) / 2 })
+
+/** A session for a fresh profile, recording every event it emits. */
+function makeSession(pos, profile = createProfile('a', 'A')) {
+  const events = []
+  const session = new PlayerSession(profile, { now: 0, emit: (type, payload) => events.push({ type, payload }), getPosition: () => pos })
+  return { session, profile, events, count: (type) => events.filter((e) => e.type === type).length }
+}
+
+/** Trains on pad 0 until max level. */
+function maxOut(p) {
+  for (let i = 0; i < 1e5 && p.level < levelCap(p.rebirths); i += 1) applyTrain(p, 0, 0)
+}
+
+// --- Formatting ------------------------------------------------------------------
 
 test('numbers format like the HUD', () => {
   assert.deepEqual(
     [0, 999, 1000, 1234, 7300, 14000, 2.5e6, 9999].map(formatNumber),
     ['0', '999', '1K', '1.2K', '7.3K', '14K', '2.5M', '9.9K'],
   )
+  assert.equal(formatDistance(1050.7), '1,050 m')
 })
 
-test('first rebirth is at level 15, then +8 levels and +0.5x per rebirth', () => {
+// --- Levels and rebirth ----------------------------------------------------------
+
+test('max level is 15 + 8 per rebirth; each rebirth adds x1 to gains', () => {
   assert.deepEqual([0, 1, 2, 3].map(levelCap), [15, 23, 31, 39])
-  assert.deepEqual([0, 1, 2, 3].map(rebirthMultiplier), [1, 1.5, 2, 2.5])
+  assert.deepEqual([0, 1, 2, 3].map(rebirthMultiplier), [1, 2, 3, 4])
 })
 
-test('levels follow Slide like the reference: 200 / 237 / 280 for levels 13-15', () => {
-  assert.deepEqual([13, 14, 15].map(slideForLevel), [200, 237, 280])
+test('each level needs more Health than the last', () => {
+  assert.equal(healthForLevel(1), 0)
+  for (let level = 2; level <= 60; level += 1) {
+    assert.ok(healthForLevel(level) > healthForLevel(level - 1), `level ${level}`)
+  }
   assert.equal(levelFor(0, 0), 1)
-  assert.equal(levelFor(279, 0), 14)
-  assert.equal(levelFor(280, 0), 15)
-  assert.equal(levelFor(1e9, 0), 15, 'never past the cap')
+  assert.equal(levelFor(healthForLevel(15) - 1, 0), 14)
+  assert.equal(levelFor(1e12, 0), 15, 'never past the cap')
+  assert.equal(levelFor(1e12, 1), 23)
 })
 
-test('about 280 Slide slides about a kilometre', () => {
-  const d = slideDistance(280)
-  assert.ok(d > 980 && d < 1080, `got ${d}`)
-})
-
-test('the free treadmill gives +1 a step and stops at max level', () => {
+test('the first pad gives the tire power per step and stops at max level', () => {
   const p = createProfile('a', 'A')
   for (let i = 0; i < 10; i += 1) applyTrain(p, 0, 0)
-  assert.equal(p.slide, 10)
-  for (let i = 0; i < 1000; i += 1) applyTrain(p, 0, 0)
-  assert.equal(p.slide, slideForLevel(15))
+  assert.equal(p.health, 10)
+  maxOut(p)
+  assert.equal(p.health, healthForLevel(15))
   assert.equal(p.level, 15)
+  assert.equal(applyTrain(p, 0, 0).gain, 0, 'no more natural gains at max level')
+  assert.equal(p.health, healthForLevel(15))
 })
 
-test('boards and rebirths multiply gains', () => {
+test('locked pads give nothing', () => {
   const p = createProfile('a', 'A')
-  p.ownedBoards.push('sky', 'sunny')
-  p.equippedBoard = 'sunny'
-  applyTrain(p, 0, 0)
-  assert.equal(p.slide, 1.4)
-  p.rebirths = 1
-  applyTrain(p, 1, 0)
-  assert.equal(p.slide, 1.4 + 1.4 * 2 * 1.5)
+  assert.equal(applyTrain(p, 1, 0).ok, false)
+  assert.equal(p.health, 0)
 })
 
-test('rebirth needs max level, resets Slide, keeps Wins and boards', () => {
+test('better tires add power, rebirths multiply it', () => {
+  const p = createProfile('a', 'A')
+  p.ownedTires.push('mountain')
+  p.equippedTire = 'mountain'
+  applyTrain(p, 0, 0)
+  assert.equal(p.health, TIRES[1].power)
+  p.rebirths = 1
+  p.health = 0
+  p.level = 1
+  applyTrain(p, 0, 0)
+  assert.equal(p.health, TIRES[1].power * 2)
+  applyTrain(p, 1, 0)
+  assert.equal(p.health, TIRES[1].power * 2 + TIRES[1].power * 2 * 2, 'Speed Pad is x2 on top')
+})
+
+test('rebirth needs max level, resets Health, keeps Wins and tires', () => {
   const p = createProfile('a', 'A')
   assert.equal(applyRebirth(p).ok, false)
-  for (let i = 0; i < 400; i += 1) applyTrain(p, 0, 0)
+  maxOut(p)
   p.wins = 50
+  p.ownedTires.push('mountain')
   assert.equal(applyRebirth(p).ok, true)
   assert.equal(p.rebirths, 1)
-  assert.equal(p.slide, 0)
+  assert.equal(p.health, 0)
   assert.equal(p.level, 1)
   assert.equal(p.wins, 50)
+  assert.deepEqual(p.ownedTires, ['bicycle', 'mountain'])
 })
 
 test('skipping to a rebirth costs Wins', () => {
   const p = createProfile('a', 'A')
+  const price = rebirthSkipPrice(p)
+  p.wins = price - 1
   assert.equal(skipRebirth(p).ok, false)
-  p.wins = 1e9
+  assert.equal(p.rebirths, 0)
+  p.wins = price + 5
   assert.equal(skipRebirth(p).ok, true)
   assert.equal(p.rebirths, 1)
-  assert.ok(p.wins < 1e9)
+  assert.equal(p.wins, 5)
+  assert.equal(p.health, 0)
 })
 
-test('locked treadmills give nothing', () => {
+// --- Rolling ---------------------------------------------------------------------
+
+test('a tire stops short of a wall its Health cannot break', () => {
+  const wall = ZONES[1]
+  const weak = rollOutcome(wall.wall - 1)
+  assert.ok(rollReach(wall.wall - 1) > wall.start, 'it would roll past the wall on open ground')
+  assert.equal(weak.blocked, 1)
+  assert.equal(weak.broken, 0)
+  assert.equal(weak.distance, wall.start - WALL_STOP)
+})
+
+test('enough Health smashes the wall and rolls on', () => {
+  const strong = rollOutcome(ZONES[1].wall)
+  assert.equal(strong.blocked, -1)
+  assert.equal(strong.broken, 1)
+  assert.ok(strong.distance > ZONES[1].start)
+  assert.equal(rollOutcome(0).distance, rollReach(0), 'nothing in the way of a short roll')
+})
+
+test('rolls pay Wins without using Health; a zone prize pays only once', () => {
   const p = createProfile('a', 'A')
-  assert.equal(applyTrain(p, 1, 0).ok, false)
-  assert.equal(p.slide, 0)
+  p.health = ZONES[1].wall
+  const first = applyRoll(p, 0)
+  assert.equal(p.health, ZONES[1].wall)
+  assert.deepEqual(first.discovered, [1])
+  assert.equal(first.prize, ZONES[1].discover)
+  assert.equal(first.best, true)
+  assert.equal(p.wins, first.wins + first.prize)
+  const second = applyRoll(p, 0)
+  assert.equal(second.prize, 0)
+  assert.deepEqual(second.discovered, [])
+  assert.equal(second.best, false)
+  assert.equal(p.stats.totalWins, first.wins + first.prize + second.wins)
+  assert.equal(p.stats.rolls, 2)
 })
 
-test('boards are bought in order with Wins', () => {
+test('the very first roll pays for the second tire, as the guide asks', () => {
+  const p = createProfile('a', 'A')
+  const r = applyRoll(p, 0)
+  assert.ok(r.wins >= TIRES[1].cost)
+})
+
+// --- Buying ----------------------------------------------------------------------
+
+test('tires are bought in order with Wins', () => {
   const p = createProfile('a', 'A')
   p.wins = 1000
-  assert.equal(buyBoard(p, BOARDS[3].id).ok, false)
-  assert.equal(buyBoard(p, BOARDS[1].id).ok, true)
-  assert.equal(p.wins, 1000 - BOARDS[1].cost)
-  assert.equal(p.equippedBoard, BOARDS[1].id)
+  assert.equal(buyTire(p, TIRES[3].id).ok, false, 'skipping ahead')
+  assert.equal(buyTire(p, TIRES[1].id).ok, true)
+  assert.equal(p.wins, 1000 - TIRES[1].cost)
+  assert.equal(p.equippedTire, TIRES[1].id)
+  assert.equal(buyTire(p, TIRES[2].id).ok, true)
+  assert.equal(buyTire(p, 'nope').ok, false)
+  p.wins = 0
+  assert.equal(buyTire(p, TIRES[3].id).ok, false, 'not enough Wins')
 })
 
-test('Slide packs scale with your level and ignore the cap', () => {
+test('Health packs follow your level and ignore the cap', () => {
   const p = createProfile('a', 'A')
-  const early = slidePacks(p)
-  p.slide = 250
-  p.level = levelFor(p.slide, 0)
-  const later = slidePacks(p)
+  const early = healthPacks(p)
+  p.health = healthForLevel(10)
+  p.level = levelFor(p.health, 0)
+  const later = healthPacks(p)
   assert.ok(later[0].amount > early[0].amount)
-  p.wins = later[3].price
-  assert.equal(buySlidePack(p, 3).ok, true)
-  assert.equal(p.slide, 250 + later[3].amount)
+  assert.ok(later[2].amount > later[0].amount)
+  p.wins = later[2].price - 1
+  assert.equal(buyHealthPack(p, 2).ok, false)
+  p.wins = later[2].price
+  const before = p.health
+  assert.equal(buyHealthPack(p, 2).ok, true)
+  assert.equal(p.health, before + later[2].amount)
+  assert.equal(p.wins, 0)
+  // Past the cap with packs: Health keeps climbing, the level stops at max.
+  p.health = healthForLevel(15)
+  p.level = 15
+  p.wins = 1e9
+  buyHealthPack(p, 0)
+  assert.ok(p.health > healthForLevel(15))
   assert.equal(p.level, 15)
+})
+
+// --- Boxity products -------------------------------------------------------------
+
+test('Gems products grant passes, and an owned pass turns into Wins', () => {
+  const p = createProfile('a', 'A')
+  const first = applyGemProduct(p, 'health_x2')
+  assert.equal(first.ok, true)
+  assert.equal(p.passes.healthX2, true)
   assert.equal(p.wins, 0)
+  const again = applyGemProduct(p, 'health_x2')
+  assert.ok(again.wins >= 10)
+  assert.equal(p.wins, again.wins)
+  assert.equal(p.stats.totalWins, again.wins)
+  applyGemProduct(p, 'auto_roll')
+  assert.equal(p.settings.autoRoll, true)
+  applyGemProduct(p, 'potion_bundle')
+  assert.deepEqual(p.items, { potionHealth: 3, potionWins: 3 })
+  assert.equal(applyGemProduct(p, 'nope').ok, false)
+  for (const sku of Object.keys(GEM_PRODUCTS)) assert.equal(applyGemProduct(createProfile('b', 'B'), sku).ok, true, sku)
 })
 
-test('egg odds add up to 100% and hatching charges wins', () => {
-  for (const [id, egg] of Object.entries(EGGS)) {
-    assert.equal(egg.pets.reduce((s, [, w]) => s + w, 0), 100, id)
-  }
+test('ad rewards have a cooldown per placement', () => {
   const p = createProfile('a', 'A')
-  p.wins = 60
-  const r = hatchEgg(p, 'basic', 1, { rand: () => 0 })
-  assert.equal(r.ok, true)
+  const s = createSession(0)
+  const [placement] = Object.keys(AD_REWARDS)
+  const t0 = 1_000_000
+  assert.equal(applyAdReward(p, s, placement, t0).ok, true)
+  assert.equal(p.items.potionHealth, 1)
+  assert.equal(applyAdReward(p, s, placement, t0 + 1000).ok, false)
+  assert.equal(applyAdReward(p, s, placement, t0 + AD_REWARDS[placement].cooldownMs).ok, true)
+  assert.equal(applyAdReward(p, s, 'nope', t0).ok, false)
+})
+
+// --- Saves -----------------------------------------------------------------------
+
+test('old or corrupt saves load with defaults filled in', () => {
+  const p = normalizeProfile(
+    { health: 'x', wins: -5, pets: [{ uid: 1, id: 'nope' }], equippedPets: [1], ownedTires: ['nope'], equippedTire: 'nope', stats: { rolls: 3 } },
+    'x',
+    'X',
+  )
+  assert.equal(p.health, 0)
   assert.equal(p.wins, 0)
-  assert.equal(p.pets[0].id, 'cat')
-  assert.deepEqual(p.equippedPets, [p.pets[0].uid])
-})
-
-test('slides pay wins and never consume Slide', () => {
-  const p = createProfile('a', 'A')
-  p.slide = 280
-  const r = applySlide(p, 0)
-  assert.equal(p.slide, 280)
-  assert.ok(r.wins > 0 && p.wins === r.wins)
-  assert.equal(r.best, true)
-  assert.equal(applySlide(p, 0).best, false)
-})
-
-test('daily rewards unlock one per day', () => {
-  const p = createProfile('a', 'A')
-  const states = dailyStatus(p, 0).map((d) => d.state)
-  assert.deepEqual(states.slice(0, 3), ['ready', 'next', 'locked'])
-})
-
-test('corrupt or old saves load safely', () => {
-  const p = normalizeProfile({ pets: [{ uid: 1, id: 'nope' }], equippedPets: [1], ownedBoards: ['nope'], slide: 'x' }, 'x', 'X')
   assert.deepEqual(p.pets, [])
   assert.deepEqual(p.equippedPets, [])
-  assert.deepEqual(p.ownedBoards, ['wood'])
-  assert.equal(p.slide, 0)
-})
-
-test('the session only trains where the player really stands', () => {
-  const events = []
-  const pos = { x: 0, y: 0, z: 0 }
-  const s = new PlayerSession(createProfile('a', 'A'), { now: 0, emit: (t) => events.push(t), getPosition: () => pos })
-  s.handle('enterTreadmill', { treadmill: 0 }, 0)
-  s.tick(2, 0)
-  assert.equal(s.profile.slide, 0, 'claimed a treadmill from spawn')
-  Object.assign(pos, onBelt(0))
-  s.tick(2, 0)
-  assert.ok(s.profile.slide > 0)
-})
-
-test('slides start only from the slide zone, and Slide ticks in on the way down', () => {
-  const events = []
-  const pos = { x: 0, y: 0, z: 14 }
-  const s = new PlayerSession(createProfile('a', 'A'), { now: 0, emit: (t) => events.push(t), getPosition: () => pos })
-  s.handle('slide', {}, 1000)
-  assert.equal(events.includes('slide'), false)
-  Object.assign(pos, inZone())
-  s.handle('slide', {}, 1000)
-  assert.equal(events.filter((e) => e === 'slide').length, 1)
-  s.handle('slide', {}, 1500)
-  assert.equal(events.filter((e) => e === 'slide').length, 1, 'no second slide while sliding')
-  for (let t = 1100; t < 4000; t += 100) s.tick(0.1, t)
-  assert.ok(s.profile.slide >= 2, `got ${s.profile.slide}`)
-  assert.equal(s.profile.tutorialStep, 1)
-})
-
-test('each world portal badges you only from its own swirl, with its own Wins', () => {
-  const pos = { x: 0, y: 0, z: 0 }
-  const s = new PlayerSession(createProfile('a', 'A'), { now: 0, emit: () => {}, getPosition: () => pos })
-  const world3 = PORTALS.find((p) => p.id === 'world3')
-  s.profile.wins = WORLD_PORTALS.world3.wins - 1
-  s.handle('portal', {}, 0)
-  assert.deepEqual(s.profile.badges, [], 'not from spawn')
-  Object.assign(pos, { x: world3.x, z: world3.z })
-  s.handle('portal', {}, 0)
-  assert.deepEqual(s.profile.badges, [], 'one Win short')
-  s.profile.wins += 1
-  s.handle('portal', {}, 0)
-  assert.deepEqual(s.profile.badges, ['world3'])
-})
-
-test('only the hop back from the slide zone skips the speed check', () => {
-  assert.equal(isSlideReturn(inZone(), SLIDE_RETURN), true)
-  assert.equal(isSlideReturn(SPAWN, SLIDE_RETURN), false, 'not from elsewhere in the lobby')
-  assert.equal(isSlideReturn(inZone(), SPAWN), false, 'not to anywhere else')
-})
-
-test('the first slide pays enough for the first board, as the guide asks', () => {
-  const p = createProfile('a', 'A')
-  const r = applySlide(p, 0)
-  assert.ok(r.wins >= BOARDS[1].cost, `first slide paid ${r.wins}, Sky Board costs ${BOARDS[1].cost}`)
-  assert.equal(TUTORIAL[1].event, 'buyBoard')
-  assert.equal(TUTORIAL[TUTORIAL.length - 1].event, 'slide', 'the guide ends with a second slide')
-})
-
-test('walking earns Slide, but teleports do not', () => {
-  const pos = { x: 0, y: 0, z: 10 }
-  const p = createProfile('a', 'A')
-  const s = new PlayerSession(p, { now: 0, emit: () => {}, getPosition: () => pos })
-  s.tick(0.1, 0)
-  // Walk 41 m at 8.2 m/s: five "+1"s (one per 8 m).
-  for (let i = 1; i <= 50; i += 1) {
-    pos.x += 0.82
-    s.tick(0.1, i * 100)
-  }
-  assert.equal(p.slide, 5)
-  // A teleport across the lobby earns nothing.
-  pos.x = -20
-  s.tick(0.1, 6000)
-  assert.equal(p.slide, 5)
-})
-
-test('boards can only be bought standing on their pad', () => {
-  const pos = { x: 0, y: 0, z: 0 }
-  const p = createProfile('a', 'A')
-  p.wins = 100
-  const s = new PlayerSession(p, { now: 0, emit: () => {}, getPosition: () => pos })
-  s.handle('buyBoard', { id: 'sky' }, 0)
-  assert.equal(p.ownedBoards.length, 1)
-  Object.assign(pos, { x: BOARD_PADS[1].x, z: BOARD_PADS[1].z })
-  s.handle('buyBoard', { id: 'sky' }, 0)
-  assert.equal(p.ownedBoards.length, 2)
+  assert.deepEqual(p.ownedTires, ['bicycle'])
+  assert.equal(p.equippedTire, 'bicycle')
+  assert.equal(p.stats.rolls, 3)
+  assert.equal(p.stats.bestDistance, 0)
+  assert.deepEqual(p.settings, { autoRebirth: false, autoRoll: false })
+  assert.deepEqual(normalizeProfile(null, 'y', 'Y'), createProfile('y', 'Y'))
+  assert.equal(normalizeProfile({ health: healthForLevel(5) }, 'z', 'Z').level, 5, 'level recomputed from Health')
 })
 
 test('only brand-new players get the tutorial', () => {
-  const fresh = normalizeProfile({ rebirths: 0, tutorialStep: 1 }, 'a', 'A')
-  assert.equal(fresh.tutorialStep, 1)
-  const reborn = normalizeProfile({ rebirths: 1, tutorialStep: 1 }, 'b', 'B')
-  assert.equal(reborn.tutorialStep, TUTORIAL.length)
+  assert.equal(normalizeProfile({ rebirths: 0, tutorialStep: 1 }, 'a', 'A').tutorialStep, 1)
+  assert.equal(normalizeProfile({ rebirths: 1, tutorialStep: 1 }, 'b', 'B').tutorialStep, TUTORIAL.length)
 })
 
-test('the shop sells for Wins only', () => {
+// --- The session -----------------------------------------------------------------
+
+test('training only counts on the pad the player really stands on', () => {
+  const pos = { x: SPAWN.x, y: 0, z: SPAWN.z }
+  const { session, profile } = makeSession(pos)
+  session.handle('enterPad', { pad: 0 }, 0)
+  session.tick(0.1, 0)
+  session.tick(2, 0)
+  assert.equal(profile.health, 0, 'claimed a pad from spawn')
+  Object.assign(pos, onPad(0))
+  session.tick(0.1, 0)
+  session.tick(2, 0)
+  assert.ok(profile.health > 0)
+  session.handle('enterPad', { pad: 1 }, 0)
+  assert.equal(session.pad, 0, 'a locked pad cannot be entered')
+})
+
+test('the first guide step completes on the pad once Health reaches 30', () => {
+  assert.equal(TUTORIAL[0].event, 'train')
+  assert.equal(TUTORIAL[0].health, 30)
+  const pos = onPad(0)
+  const { session, profile } = makeSession(pos)
+  session.handle('enterPad', { pad: 0 }, 0)
+  let t = 0
+  while (profile.health < 29) session.tick(0.1, (t += 100))
+  assert.equal(profile.tutorialStep, 0)
+  while (profile.health < 30) session.tick(0.1, (t += 100))
+  assert.equal(profile.tutorialStep, 1)
+})
+
+test('rolls start only from the roll zone, one at a time', () => {
+  const pos = { x: SPAWN.x, y: 0, z: SPAWN.z }
+  const { session, profile, count } = makeSession(pos)
+  session.handle('roll', {}, 1000)
+  assert.equal(count('roll'), 0, 'not from spawn')
+  Object.assign(pos, inRollZone())
+  session.handle('roll', {}, 1000)
+  assert.equal(count('roll'), 1)
+  session.handle('roll', {}, 1500)
+  assert.equal(count('roll'), 1, 'no second roll while the tire is out')
+  // Health ticks in while the tire rolls.
+  for (let t = 1100; t < 4000; t += 100) session.tick(0.1, t)
+  assert.ok(profile.health >= 2, `got ${profile.health}`)
+  session.handle('roll', {}, 1000 + session.busyUntil)
+  assert.equal(count('roll'), 2, 'rolls again once the cooldown is over')
+  assert.equal(profile.stats.rolls, 2)
+})
+
+test('ads and Gems are granted by the host only, never by a client message', () => {
+  const { session, profile, count } = makeSession(inRollZone())
+  session.handle('grantAdReward', { placement: 'health-potion' }, 0)
+  session.handle('grantGemProduct', { sku: 'wins_big' }, 0)
+  session.handle('adReward', { placement: 'health-potion' }, 0)
+  assert.equal(profile.wins, 0)
+  assert.deepEqual(profile.items, {})
+  assert.equal(session.grantAdReward('health-potion', 1e6).ok, true)
+  assert.equal(profile.items.potionHealth, 1)
+  assert.equal(session.grantGemProduct('wins_big').ok, true)
+  assert.ok(profile.wins > 0)
+  assert.equal(count('reward'), 2)
+})
+
+// --- Rebirth gifts ---------------------------------------------------------------
+
+/** Straight to max level (training there takes too long this late). */
+function toCap(p) {
+  p.level = levelCap(p.rebirths)
+  p.health = healthForLevel(p.level)
+}
+
+test('every 5th rebirth from 15 gives Volcano eggs', () => {
+  assert.equal(rebirthGift(14), null)
+  assert.equal(rebirthGift(16), null)
+  assert.deepEqual([15, 20, 25, 35, 100].map((r) => rebirthGift(r).amount), [3, 3, 4, 5, 6])
+  assert.equal(nextRebirthGift(0).rebirths, 15)
+  assert.equal(nextRebirthGift(15).rebirths, 20)
+  assert.equal(nextRebirthGift(19).rebirths, 20)
+
   const p = createProfile('a', 'A')
-  const s = new PlayerSession(p, { now: 0, emit: () => {}, getPosition: () => ({ x: 0, z: 0 }) })
-  s.handle('purchase', { productId: 'slideX2' }, 0)
-  assert.equal(p.passes.slideX2, undefined)
-  p.wins = SHOP.slideX2.price + 7
-  s.handle('purchase', { productId: 'slideX2' }, 0)
-  assert.equal(p.passes.slideX2, true)
-  assert.equal(p.wins, 7)
-  applyTrain(p, 0, 0)
-  assert.equal(p.slide, 2, 'x2 Slide doubles gains')
+  p.rebirths = 14
+  toCap(p)
+  const result = applyRebirth(p)
+  assert.equal(result.gift.rebirths, 15)
+  assert.equal(p.items.eggVolcano, 3)
+  toCap(p)
+  assert.equal(applyRebirth(p).gift, null, 'nothing at rebirth 16')
+  assert.equal(p.items.eggVolcano, 3)
+})
+
+test('a rebirth gift is announced to the player', () => {
+  const { session, profile, events } = makeSession(SPAWN)
+  profile.rebirths = 19
+  toCap(profile)
+  session.handle('rebirth', {}, 0)
+  const reward = events.find((e) => e.type === 'reward')
+  assert.match(reward.payload.label, /REBIRTH 20 GIFT: 3 Volcano Eggs/)
+})
+
+// --- World 2 ---------------------------------------------------------------------
+
+test('World 2 has its own sixty stages at the same gates, paying more', () => {
+  const [w1, w2] = WORLD_ZONES
+  assert.equal(w2.length, w1.length)
+  assert.equal(new Set(w2.map((z) => z.id)).size, w2.length, 'unique ids')
+  assert.ok(w2.every((z) => !w1.some((o) => o.name === z.name)), 'new names')
+  for (let i = 0; i < w1.length; i += 1) {
+    assert.equal(w2[i].start, w1[i].start)
+    assert.equal(w2[i].wall, w1[i].wall)
+    assert.equal(w2[i].discover, w1[i].discover * WORLDS[1].wins)
+  }
+})
+
+test('the portal opens at enough Wins, without spending them, and goes both ways', () => {
+  const p = createProfile('a', 'A')
+  assert.equal(usePortal(p).ok, false)
+  assert.equal(p.world, 0)
+  p.wins = WORLD_PORTALS.world2.wins
+  assert.deepEqual(usePortal(p), { ok: true, world: 1, first: true })
+  assert.equal(p.wins, WORLD_PORTALS.world2.wins, 'Wins kept')
+  assert.equal(usePortal(p).world, 0, 'back home')
+  p.wins = 0
+  assert.equal(usePortal(p).world, 1, 'open for good once unlocked')
+  const saved = normalizeProfile(JSON.parse(JSON.stringify(p)), 'a', 'A')
+  assert.equal(saved.world, 1)
+  assert.equal(saved.world2Unlocked, true)
+  assert.equal(normalizeProfile({ ...p, world2Unlocked: false }, 'a', 'A').world, 0, 'no World 2 without the unlock')
+})
+
+test('a roll in World 2 pays its multiplier and its own first-visit prizes', () => {
+  const one = createProfile('a', 'A')
+  const two = createProfile('b', 'B')
+  one.health = two.health = 5000
+  two.world = 1
+  two.world2Unlocked = true
+  const a = applyRoll(one, 0)
+  const b = applyRoll(two, 0)
+  assert.equal(b.distance, a.distance, 'same gates, same distance')
+  assert.ok(Math.abs(b.wins - a.wins * WORLDS[1].wins) <= WORLDS[1].wins, `${b.wins} vs ${a.wins}`)
+  assert.equal(b.prize, a.prize * WORLDS[1].wins)
+  assert.equal(two.stats.bestZone, 0, "World 1's discoveries untouched")
+  assert.ok(two.stats.bestZone2 > 0)
+})
+
+test('stepping into the portal switches world and tells the client', () => {
+  const portal = PORTALS[0]
+  const { session, profile, events } = makeSession({ x: portal.x, y: 0, z: portal.z })
+  session.handle('portal', {}, 0)
+  assert.equal(profile.world, 0, 'not enough Wins yet')
+  profile.wins = WORLD_PORTALS.world2.wins
+  session.handle('portal', {}, 0)
+  assert.equal(profile.world, 1)
+  assert.deepEqual(events.find((e) => e.type === 'world').payload, { world: 1, first: true })
+  session.handle('portal', {}, 0)
+  assert.equal(profile.world, 0)
 })

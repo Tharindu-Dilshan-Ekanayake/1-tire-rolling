@@ -8,8 +8,9 @@ import { ChunkyButton, Price } from './parts'
 import { u } from './style'
 
 const PASSES = [
-  { product: 'slideX2', label: 'x2 Slide', icon: 'slide', gradient: 'linear-gradient(135deg, #ff5fd2 0%, #8a5cff 35%, #2fb8ff 70%, #5cff9a 100%)' },
+  { product: 'healthX2', label: 'x2 Health', icon: 'heart', gradient: 'linear-gradient(135deg, #ff5fd2 0%, #8a5cff 35%, #2fb8ff 70%, #5cff9a 100%)' },
   { product: 'winsX2', label: 'x2 Wins', icon: 'trophy', gradient: 'linear-gradient(180deg, #fff27a 0%, #ffcb1f 48%, #ff9a0a 100%)' },
+  { product: 'autoRoll', label: 'Auto Roll', icon: 'tire', gradient: 'linear-gradient(180deg, #b6ff6a 0%, #57e83a 50%, #19b52a 100%)' },
 ]
 
 /** One pass: its name over a big icon, and the price (or OWNED) underneath. */
@@ -40,10 +41,10 @@ function PassButton({ product, label, icon, gradient }) {
   )
 }
 
-/** The x2 Slide and x2 Wins passes down the right-hand side, as in the reference. */
+/** The x2 Health, x2 Wins and Auto Roll passes down the right-hand side, as in the reference. */
 export function PassButtons() {
   return (
-    <div className="pointer-events-none absolute flex flex-col" style={{ right: u(24), top: '34%', gap: u(26) }}>
+    <div className="hud-passes pointer-events-none absolute flex flex-col" style={{ gap: u(26) }}>
       {PASSES.map((pass) => (
         <PassButton key={pass.product} {...pass} />
       ))}

@@ -2,11 +2,11 @@ import { useFrame } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Color, InstancedMesh, Matrix4, PlaneGeometry, Quaternion, ShaderMaterial, Vector3 } from 'three'
 
-import { groundHeightAt, SLIDE_START_Z, SLOPE_ANGLE } from '@shared/world'
+import { groundHeightAt, TRACK_START_Z, SLOPE_ANGLE } from '@shared/world'
 
 import { useQuality } from '../store/quality'
 import { runtime } from './runtime'
-import { slopeY } from './slide/path'
+import { slopeY } from './roll/path'
 
 const MAX_BLOBS = 48
 
@@ -91,9 +91,9 @@ export function BlobShadows() {
       if (i >= MAX_BLOBS) break
       if (caster.visible === false) continue
       const p = caster.position
-      // Shrinks as the caster rises, like a real contact shadow. Down the hill, it lies
-      // on the slope.
-      const onSlope = p.z < SLIDE_START_Z
+      // Shrinks as the caster rises, like a real contact shadow. On the track, it lies
+      // on the track's floor.
+      const onSlope = p.z < TRACK_START_Z
       const floor = onSlope ? slopeY(p.z) : groundHeightAt(p.x, p.z)
       const lift = Math.max(0, p.y - floor)
       const size = caster.size * Math.max(0.35, 1 - lift * 0.12)

@@ -1,5 +1,5 @@
 /**
- * A full-screen white flash for cuts (back to the top after a slide), done with a CSS
+ * A full-screen white flash for cuts (back to the start after a roll), done with a CSS
  * transition on one element the ScreenFade component registers here: no React renders.
  */
 let element = null

@@ -3,8 +3,8 @@ import { EGG_STANDS, FREE_REWARD, SPHINX_STAND } from '@shared/world'
 import { STYLE } from '../materials'
 
 /**
- * Egg stands: a blue-and-white pedestal ringed in light, plus the big Demon Egg's dark
- * plinth (with its horns and wings) and the Sphinx showcase. Blocks and merged props,
+ * Egg stands: a blue-and-white pedestal ringed in light, plus the big Volcano Egg's
+ * rocky plinth (with its lava pool and smoking vents) and the Sphinx showcase. Blocks and merged props,
  * riding along in the world's existing draw calls; the eggs themselves float above in
  * EggDisplays.
  */
@@ -15,18 +15,16 @@ const RING = { basic: '#7fe2ff', meadow: '#5cff6a', sunset: '#ffb347', unicorn: 
 /** Height of an egg's centre above the ground. */
 export const eggHeight = (stand) => (stand.big ? 3.4 : 2.6)
 
-export function buildEggStands(blocks, props) {
+export function buildEggStands(blocks) {
   for (const stand of EGG_STANDS) {
     if (stand.big) {
-      // Demon Egg: dark stepped plinth with a glowing rim, horns and bat wings.
-      blocks.addOn(stand.x, 0, stand.z, 4.2, 0.7, 4.2, '#24141f')
-      blocks.addOn(stand.x, 0.7, stand.z, 3.6, 0.35, 3.6, '#ff3b1e', STYLE.LAVA)
-      blocks.addOn(stand.x, 1.05, stand.z, 3.2, 0.3, 3.2, '#3a1a2a')
-      const y = eggHeight(stand)
-      for (const side of [-1, 1]) {
-        props.box(stand.x + side * 0.7, y + 1.95, stand.z, 0.35, 1.1, 0.35, '#1d1d24', STYLE.SMOOTH, [0, 0, side * -0.45])
-        props.box(stand.x + side * 1.85, y + 0.5, stand.z - 0.3, 1.6, 0.9, 0.12, '#a8162a', STYLE.STUDS, [0, side * 0.3, side * 0.45])
-        props.box(stand.x + side * 2.45, y + 1.05, stand.z - 0.45, 1.0, 0.6, 0.12, '#7a0f1f', STYLE.STUDS, [0, side * 0.3, side * 0.8])
+      // Volcano Egg: a rocky stepped plinth round a pool of lava, with craggy rocks.
+      blocks.addOn(stand.x, 0, stand.z, 4.2, 0.7, 4.2, '#3a3337')
+      blocks.addOn(stand.x, 0.7, stand.z, 3.6, 0.35, 3.6, '#ff6a14', STYLE.LAVA)
+      blocks.addOn(stand.x, 1.05, stand.z, 3.2, 0.3, 3.2, '#2f2a2d')
+      for (const [dx, dz, s] of [[-1.9, -1.6, 1.1], [1.8, -1.4, 0.9], [-1.6, 1.8, 0.8], [1.9, 1.7, 1.2]]) {
+        blocks.addOn(stand.x + dx, 0, stand.z + dz, 1.1 * s, 1.6 * s, 1.1 * s, '#433a3d', STYLE.STUDS, s)
+        blocks.add(stand.x + dx, 1.7 * s, stand.z + dz, 0.4 * s, 0.4 * s, 0.4 * s, '#ff8a1e', STYLE.GLOW)
       }
       continue
     }

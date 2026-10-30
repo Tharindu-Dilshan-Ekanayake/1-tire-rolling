@@ -177,28 +177,32 @@ const MODELS = {
     wings(p, '#ffffff', { span: 0.65, glow: true })
     tail(p, '#5cb8ff', { y: 0.6, len: 0.4 })
   },
-  imp: (p) => {
-    body(p, '#e83a3a', { belly: '#ff8a7a', feet: '#5a0a10' })
-    for (const x of [-0.3, 0.3]) horn(p, x, 1.22, '#1d1d24')
-    eyes(p, { color: '#ffd23a' })
-    p.box(0, 0.36, 0.52, 0.3, 0.06, 0.04, '#5a0a10', STYLE.SMOOTH)
-    tail(p, '#e83a3a', { y: 0.4, len: 0.45, tip: '#1d1d24' })
+  salamander: (p) => {
+    body(p, '#ff6a2a', { belly: '#ffd23a', feet: '#8a2a10' })
+    for (const x of [-0.24, 0.24]) p.box(x, 1.09, 0.1, 0.18, 0.04, 0.5, '#2a1a10', STYLE.SMOOTH)
+    eyes(p, { color: '#2a1a10' })
+    p.box(0, 0.36, 0.52, 0.3, 0.06, 0.04, '#8a2a10', STYLE.SMOOTH)
+    tail(p, '#ff6a2a', { y: 0.35, len: 0.55, tip: '#ffd23a' })
   },
-  bat: (p) => {
-    body(p, '#4a2a6a', { belly: '#7a5a9a' })
-    for (const x of [-0.3, 0.3]) ear(p, x, 1.22, '#4a2a6a', 0.2, 0.36)
-    eyes(p, { color: '#ff3b6b' })
-    for (const x of [-0.1, 0.1]) p.box(x, 0.36, 0.53, 0.06, 0.1, 0.03, '#ffffff', STYLE.SMOOTH)
-    wings(p, '#2a1840', { span: 0.7, y: 0.75 })
+  firebird: (p) => {
+    body(p, '#ff8a1e', { belly: '#ffe45c', style: STYLE.GLOW })
+    for (const [x, h] of [[-0.18, 0.26], [0, 0.38], [0.18, 0.26]]) p.box(x, 1.1 + h / 2, -0.05, 0.12, h, 0.12, '#ff3b1e', STYLE.GLOW)
+    eyes(p, { y: 0.66 })
+    p.box(0, 0.45, 0.55, 0.16, 0.14, 0.12, '#ffcf1f', STYLE.SMOOTH)
+    wings(p, '#ff5a1e', { span: 0.62, glow: true })
+    tail(p, '#ff3b1e', { y: 0.5, len: 0.45, tip: '#ffe45c' })
   },
-  demon: (p) => {
-    body(p, '#ff3b1e', { style: STYLE.LAVA, feet: '#1d0a0a' })
-    for (const x of [-0.32, 0.32]) horn(p, x, 1.26, '#2a1a1a', 0.35)
-    eyes(p, { color: '#ff3b1e' })
-    wings(p, '#a8162a', { span: 0.6 })
-    tail(p, '#1d0a0a', { y: 0.4, len: 0.5, tip: '#ff3b1e' })
+  golem: (p) => {
+    body(p, '#3a3337', { feet: '#1d1a1c' })
+    // Glowing magma cracks over the stone.
+    p.box(0.505, 0.6, 0, 0.02, 0.5, 0.08, '#ff6a14', STYLE.GLOW)
+    p.box(-0.505, 0.45, 0.1, 0.02, 0.08, 0.5, '#ff6a14', STYLE.GLOW)
+    p.box(0.1, 1.085, -0.1, 0.5, 0.02, 0.08, '#ff6a14', STYLE.GLOW)
+    for (const side of [-1, 1]) p.box(side * 0.62, 0.55, 0, 0.26, 0.5, 0.36, '#433a3d')
+    eyes(p, { color: '#ff6a14' })
+    p.box(0, 1.16, 0, 0.6, 0.14, 0.5, '#4a4246')
   },
-  hellhound: (p) => {
+  inferno: (p) => {
     body(p, '#24242c', { belly: '#3a3a46', feet: '#ff5a1e' })
     for (const x of [-0.32, 0.32]) ear(p, x, 1.2, '#24242c', 0.22, 0.32)
     p.box(0, 1.1, 0, 1.04, 0.1, 1.04, '#ff6a14', STYLE.GLOW)

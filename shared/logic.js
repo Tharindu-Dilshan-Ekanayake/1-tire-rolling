@@ -1,11 +1,13 @@
 import {
+  AD_REWARDS,
   BADGES,
-  BASE_GAIN,
-  BOARDS,
   DAILY_INTERVAL_MS,
   DAILY_REWARDS,
   EGGS,
   FREE_REWARD,
+  GEM_PRODUCTS,
+  HEALTH_PACKS,
+  healthForLevel,
   ITEMS,
   levelCap,
   MAX_EQUIPPED_PETS,
@@ -13,25 +15,30 @@ import {
   OFFLINE_MAX_MS,
   OFFLINE_MIN_MS,
   OFFLINE_RATE,
+  PADS,
   PETS,
   PLAYTIME_REWARDS,
   RARITIES,
-  REBIRTH_SKIP_SLIDES,
+  REBIRTH_SKIP_ROLLS,
+  rebirthGift,
   rebirthMultiplier,
+  ROLL_BASE,
+  ROLL_H0,
+  ROLL_RECOVERY,
+  rollDuration,
   SHOP,
-  SLIDE_BASE,
-  SLIDE_K,
-  SLIDE_PACKS,
-  SLIDE_RECOVERY,
-  slideDuration,
-  slideForLevel,
+  TIRES,
   TRAIN_INTERVAL,
-  TREADMILLS,
   TROPHY_FIRST,
   TROPHY_METERS,
   TROPHY_SPACING,
   TUTORIAL,
+  WALL_MARGIN,
+  WALL_STOP,
+  WORLD_PORTALS,
+  WORLD_ZONES,
   ZONES,
+  zonesOf,
 } from './balance.js'
 
 /**
@@ -53,26 +60,41 @@ export function createProfile(id, name) {
     v: PROFILE_VERSION,
     id,
     name,
-    slide: 0,
+    health: 0,
     wins: 0,
     rebirths: 0,
     level: 1,
-    equippedBoard: 'wood',
-    ownedBoards: ['wood'],
+    equippedTire: 'bicycle',
+    ownedTires: ['bicycle'],
     pets: [],
     equippedPets: [],
     nextPetUid: 1,
     items: {},
-    boosts: { slide: 0, wins: 0 },
+    boosts: { health: 0, wins: 0 },
     passes: {},
     daily: { start: 0, claimed: [] },
     freeRewardClaimed: false,
     tutorialStep: 0,
     badges: [],
-    stats: { slides: 0, trains: 0, bestDistance: 0, playtime: 0, bestSlide: 0 },
-    lastTreadmill: -1,
+    stats: {
+      rolls: 0,
+      trains: 0,
+      bestDistance: 0,
+      playtime: 0,
+      bestHealth: 0,
+      totalWins: 0,
+      wallsBroken: 0,
+      /** Furthest zone ever reached (index into ZONES): its `discover` prize is paid once. */
+      bestZone: 0,
+      /** The same for World 2's stages. */
+      bestZone2: 0,
+    },
+    /** The world you're in (index into WORLDS), and whether World 2's portal is open. */
+    world: 0,
+    world2Unlocked: false,
+    lastPad: -1,
     lastSeen: 0,
-    settings: { autoRebirth: false },
+    settings: { autoRebirth: false, autoRoll: false },
   }
 }
 
@@ -86,42 +108,48 @@ export function normalizeProfile(raw, id, name) {
   p.settings = { ...base.settings, ...(raw.settings || {}) }
   p.daily = { ...base.daily, ...(raw.daily || {}) }
   p.items = Object.fromEntries(Object.entries(raw.items || {}).filter(([itemId]) => ITEMS[itemId]))
-  p.passes = { ...(raw.passes || {}) }
-  p.slide = Number.isFinite(raw.slide) ? Math.max(0, raw.slide) : 0
+  p.passes = Object.fromEntries(Object.entries(raw.passes || {}).filter(([productId]) => SHOP[productId]))
+  p.health = Number.isFinite(raw.health) ? Math.max(0, raw.health) : 0
+  p.wins = Number.isFinite(raw.wins) ? Math.max(0, raw.wins) : 0
   p.pets = Array.isArray(raw.pets) ? raw.pets.filter((pet) => PETS[pet?.id]) : []
   p.equippedPets = Array.isArray(raw.equippedPets)
     ? raw.equippedPets.filter((uid) => p.pets.some((pet) => pet.uid === uid)).slice(0, MAX_EQUIPPED_PETS)
     : []
-  const owned = Array.isArray(raw.ownedBoards) ? raw.ownedBoards.filter((boardId) => boardIndex(boardId) >= 0) : []
-  p.ownedBoards = owned.length ? owned : ['wood']
-  if (!p.ownedBoards.includes(p.equippedBoard)) p.equippedBoard = p.ownedBoards[0]
-  // Levels follow from Slide; recompute rather than trust a stored one.
-  p.level = levelFor(p.slide, p.rebirths)
+  const owned = Array.isArray(raw.ownedTires) ? raw.ownedTires.filter((tireId) => tireIndex(tireId) >= 0) : []
+  p.ownedTires = owned.length ? owned : ['bicycle']
+  if (!p.ownedTires.includes(p.equippedTire)) p.equippedTire = p.ownedTires[0]
+  p.stats.bestZone = Math.min(ZONES.length - 1, Math.max(0, Math.floor(p.stats.bestZone) || 0))
+  p.stats.bestZone2 = Math.min(ZONES.length - 1, Math.max(0, Math.floor(p.stats.bestZone2) || 0))
+  p.world2Unlocked = raw.world2Unlocked === true
+  p.world = p.world2Unlocked && raw.world === 1 ? 1 : 0
+  // Levels follow from Health; recompute rather than trust a stored one.
+  p.level = levelFor(p.health, p.rebirths)
   // The tutorial is for brand-new players only: anyone who has rebirthed is past it.
   if (p.rebirths > 0) p.tutorialStep = TUTORIAL.length
+  p.tutorialStep = Math.min(TUTORIAL.length, Math.max(0, Math.floor(p.tutorialStep) || 0))
   p.v = PROFILE_VERSION
   return p
 }
 
 export function createSession(now) {
-  return { start: now, playtimeClaimed: [], freeRewardTaken: false }
+  return { start: now, playtimeClaimed: [], freeRewardTaken: false, adAt: {} }
 }
 
 // --- Lookups ------------------------------------------------------------------------
 
-export const boardIndex = (id) => BOARDS.findIndex((b) => b.id === id)
-export const boardById = (id) => BOARDS.find((b) => b.id === id) || BOARDS[0]
+export const tireIndex = (id) => TIRES.findIndex((t) => t.id === id)
+export const tireById = (id) => TIRES.find((t) => t.id === id) || TIRES[0]
 
-export function isTreadmillUnlocked(profile, index) {
-  const treadmill = TREADMILLS[index]
-  if (!treadmill) return false
-  if (treadmill.product) return Boolean(profile.passes[treadmill.product])
-  return profile.rebirths >= treadmill.rebirths
+export function isPadUnlocked(profile, index) {
+  const pad = PADS[index]
+  if (!pad) return false
+  if (pad.product) return Boolean(profile.passes[pad.product])
+  return profile.rebirths >= pad.rebirths
 }
 
 /**
- * Slide values are kept to a tenth below a million (the HUD shows "+1.8") and whole
- * above, so repeated small gains don't pile up float dust.
+ * Health values are kept to a tenth below a million and whole above, so repeated
+ * small gains don't pile up float dust.
  */
 export const tidy = (value) => (value < 1e6 ? Math.round(value * 10) / 10 : Math.round(value))
 
@@ -134,11 +162,11 @@ export function niceRound(n) {
 
 // --- Levels -------------------------------------------------------------------------
 
-/** The level `slide` reaches, never above the cap for `rebirths`. */
-export function levelFor(slide, rebirths) {
+/** The level `health` reaches, never above the cap for `rebirths`. */
+export function levelFor(health, rebirths) {
   const cap = levelCap(rebirths)
   let level = 1
-  while (level < cap && slide >= slideForLevel(level + 1)) level += 1
+  while (level < cap && health >= healthForLevel(level + 1)) level += 1
   return level
 }
 
@@ -147,9 +175,9 @@ export const isMaxLevel = (profile) => profile.level >= levelCap(profile.rebirth
 /** 0..1 through the current level: what the level bar fills to. */
 export function levelProgress(profile) {
   if (isMaxLevel(profile)) return 1
-  const from = slideForLevel(profile.level)
-  const to = slideForLevel(profile.level + 1)
-  return Math.max(0, Math.min(1, (profile.slide - from) / Math.max(1e-9, to - from)))
+  const from = healthForLevel(profile.level)
+  const to = healthForLevel(profile.level + 1)
+  return Math.max(0, Math.min(1, (profile.health - from) / Math.max(1e-9, to - from)))
 }
 
 /** 0..1 progress towards being able to rebirth, by levels. */
@@ -173,9 +201,9 @@ export function petMultiplier(profile) {
 
 export const isBoostActive = (profile, kind, now) => (profile.boosts[kind] || 0) > now
 
-/** The x2 Slide pass and potion; they stack. */
-export function slideBoostMultiplier(profile, now) {
-  return (profile.passes.slideX2 ? 2 : 1) * (isBoostActive(profile, 'slide', now) ? 2 : 1)
+/** The x2 Health pass and potion; they stack. */
+export function healthBoostMultiplier(profile, now) {
+  return (profile.passes.healthX2 ? 2 : 1) * (isBoostActive(profile, 'health', now) ? 2 : 1)
 }
 
 /** The x2 Wins pass and potion; they stack. */
@@ -183,79 +211,114 @@ export function winsMultiplier(profile, now) {
   return (profile.passes.winsX2 ? 2 : 1) * (isBoostActive(profile, 'wins', now) ? 2 : 1)
 }
 
-/** Everything that multiplies a Slide gain except where you earn it. */
+/** Everything that multiplies a Health gain except the tire and where you earn it. */
 export function gainMultiplier(profile, now) {
-  return (
-    boardById(profile.equippedBoard).mult *
-    rebirthMultiplier(profile.rebirths) *
-    petMultiplier(profile) *
-    slideBoostMultiplier(profile, now)
-  )
+  return rebirthMultiplier(profile.rebirths) * petMultiplier(profile) * healthBoostMultiplier(profile, now)
 }
 
-/** Slide from one treadmill step on treadmill `index`. */
-export function treadmillGain(profile, index, now) {
-  const treadmill = TREADMILLS[index]
-  if (!treadmill) return 0
-  return tidy(BASE_GAIN * treadmill.mult * gainMultiplier(profile, now))
-}
+/** Health from one gain anywhere but a pad: your tire's power, multiplied. */
+export const baseGain = (profile, now) => tidy(tireById(profile.equippedTire).power * gainMultiplier(profile, now))
 
-/** Slide from one tick of sliding down the hill: the "+1". */
-export const slideTickGain = (profile, now) => tidy(BASE_GAIN * gainMultiplier(profile, now))
+/** Health from one training step on pad `index`. */
+export function padGain(profile, index, now) {
+  const pad = PADS[index]
+  if (!pad) return 0
+  return tidy(tireById(profile.equippedTire).power * pad.mult * gainMultiplier(profile, now))
+}
 
 // --- Training, levels, rebirth ------------------------------------------------------
 
 /**
- * Banks a natural gain (treadmill or sliding) and the levels it reaches. Once you're at
- * max level natural gains stop: rebirth to keep going. Returns what was really added.
+ * Banks a natural gain (pad, rolling or walking) and the levels it reaches. Once you're
+ * at max level natural gains stop: rebirth to keep going. Returns what was really added.
  */
-function addSlide(profile, gain) {
+function addHealth(profile, gain) {
   const cap = levelCap(profile.rebirths)
   if (profile.level >= cap) return { gain: 0, leveledUp: false, maxed: true }
   // Stops exactly on max level rather than overshooting it.
-  const room = Math.max(0, slideForLevel(cap) - profile.slide)
+  const room = Math.max(0, healthForLevel(cap) - profile.health)
   const added = tidy(Math.min(gain, room))
-  profile.slide = tidy(profile.slide + added)
+  profile.health = tidy(profile.health + added)
   profile.stats.trains += 1
-  profile.stats.bestSlide = Math.max(profile.stats.bestSlide, profile.slide)
+  profile.stats.bestHealth = Math.max(profile.stats.bestHealth, profile.health)
   const before = profile.level
-  profile.level = levelFor(profile.slide, profile.rebirths)
-  return { gain: added, leveledUp: profile.level > before, maxed: profile.level >= cap }
+  profile.level = levelFor(profile.health, profile.rebirths)
+  return { gain: added, leveledUp: profile.level > before, levels: profile.level - before, maxed: profile.level >= cap }
 }
 
 export function applyTrain(profile, index, now) {
-  if (!isTreadmillUnlocked(profile, index)) return { ok: false, error: 'Treadmill locked' }
-  profile.lastTreadmill = index
-  return { ok: true, ...addSlide(profile, treadmillGain(profile, index, now)) }
+  if (!isPadUnlocked(profile, index)) return { ok: false, error: 'Pad locked' }
+  profile.lastPad = index
+  return { ok: true, ...addHealth(profile, padGain(profile, index, now)) }
 }
 
-/** One tick of Slide while sliding down the hill. */
-export function applySlideTick(profile, now) {
-  return { ok: true, ...addSlide(profile, slideTickGain(profile, now)) }
+/** One tick of Health while your tire rolls. */
+export function applyRollTick(profile, now) {
+  return { ok: true, ...addHealth(profile, baseGain(profile, now)) }
 }
 
-/** One step's worth of walking round the lobby: the same "+1" as a slide tick. */
-export const applyWalkStep = applySlideTick
+/** One step's worth of walking round the lobby: the same gain as a roll tick. */
+export const applyWalkStep = applyRollTick
 
-/** Rebirth: +1 rebirth; Slide and levels reset (Wins, boards and pets stay). */
+/** Rebirth: +1 rebirth; Health and levels reset (Wins, tires and pets stay). */
 export function applyRebirth(profile) {
   if (!isMaxLevel(profile)) return { ok: false, error: `Reach level ${levelCap(profile.rebirths)} first!` }
   profile.rebirths += 1
   profile.tutorialStep = TUTORIAL.length
-  profile.slide = 0
+  profile.health = 0
   profile.level = 1
-  return { ok: true, rebirths: profile.rebirths }
+  const gift = rebirthGift(profile.rebirths)
+  if (gift) addItem(profile, gift.item, gift.amount)
+  return { ok: true, rebirths: profile.rebirths, gift }
 }
 
-// --- Sliding ------------------------------------------------------------------------
+// --- Rolling ------------------------------------------------------------------------
 
-export const slideDistance = (slide) => SLIDE_BASE + SLIDE_K * Math.sqrt(Math.max(0, slide))
+/** How far `health` rolls on open ground, before any wall gets in the way. */
+/** Health that just reaches each gate on open ground (its wall needs WALL_MARGIN times it). */
+const GATE_REACH = ZONES.map((z) => z.wall / WALL_MARGIN)
+
+/**
+ * How far `health` rolls on open ground, before any wall gets in the way: up to the
+ * first gate along a gentle curve from ROLL_BASE, then from each gate's mark to the next
+ * as Health climbs from one gate's reach to the next (in log terms), and past the last
+ * gate at the last stage's pace.
+ */
+export function rollReach(health) {
+  const h = Math.max(0, health)
+  const first = GATE_REACH[1]
+  if (h <= first) return ROLL_BASE + ((ZONES[1].start - ROLL_BASE) * Math.log1p(h / ROLL_H0)) / Math.log1p(first / ROLL_H0)
+  let i = 1
+  while (i + 1 < ZONES.length && h >= GATE_REACH[i + 1]) i += 1
+  // Past the last gate, keep going at the last stage's pace.
+  const a = i + 1 < ZONES.length ? i : i - 1
+  const span = ZONES[a + 1].start - ZONES[a].start
+  return ZONES[i].start + (span * Math.log(h / GATE_REACH[i])) / Math.log(GATE_REACH[a + 1] / GATE_REACH[a])
+}
 
 export function zoneIndexAt(meter) {
   for (let i = ZONES.length - 1; i >= 0; i -= 1) {
     if (meter >= ZONES[i].start) return i
   }
   return 0
+}
+
+/**
+ * Where a tire with `health` ends up: rolling up to its reach and smashing every wall
+ * on the way it's strong enough for, or stopped dead (WALL_STOP short) by the first
+ * one it isn't. `blocked` is that wall's zone index (-1 if none); `broken` how many
+ * walls it smashed.
+ */
+export function rollOutcome(health) {
+  const reach = rollReach(health)
+  let broken = 0
+  for (let i = 1; i < ZONES.length; i += 1) {
+    const zone = ZONES[i]
+    if (zone.start > reach) break
+    if (health < zone.wall) return { distance: zone.start - WALL_STOP, blocked: i, broken, reach }
+    broken += 1
+  }
+  return { distance: reach, blocked: -1, broken, reach }
 }
 
 /** Metres of every trophy within `distance`. */
@@ -265,68 +328,103 @@ export function trophiesWithin(distance) {
   return out
 }
 
-export const trophyValue = (meter) => Math.max(1, Math.round(ZONES[zoneIndexAt(meter)].winsPerMeter * TROPHY_METERS))
+/** Wins the trophy at `meter` is worth in `world`, before multipliers. */
+export const trophyValue = (meter, world = 0) => Math.max(1, Math.round(zonesOf(world)[zoneIndexAt(meter)].winsPerMeter * TROPHY_METERS))
 
-/** Wins for a slide before multipliers: metres slid in each zone, plus trophies. */
-export function baseSlideWins(distance) {
+/**
+ * Wins for a roll in `world` before multipliers: metres in each zone, trophies and
+ * smashed walls. (All worlds' stages start at the same metres; only what they pay differs.)
+ */
+export function baseRollWins(distance, world = 0) {
+  const zones = zonesOf(world)
   let wins = 0
-  for (let i = 0; i < ZONES.length; i += 1) {
-    const start = ZONES[i].start
-    const end = i + 1 < ZONES.length ? ZONES[i + 1].start : Infinity
+  for (let i = 0; i < zones.length; i += 1) {
+    const start = zones[i].start
+    const end = i + 1 < zones.length ? zones[i + 1].start : Infinity
     const metres = Math.max(0, Math.min(distance, end) - start)
-    wins += metres * ZONES[i].winsPerMeter
+    wins += metres * zones[i].winsPerMeter
+    if (i > 0 && distance >= start) wins += zones[i].smash
   }
-  for (let m = TROPHY_FIRST; m <= distance; m += TROPHY_SPACING) wins += trophyValue(m)
+  for (let m = TROPHY_FIRST; m <= distance; m += TROPHY_SPACING) wins += trophyValue(m, world)
   return wins
 }
 
+/** Wins a roll at `health` pays in `world` before multipliers. */
+export const rollWinsAt = (health, world = 0) => baseRollWins(rollOutcome(health).distance, world)
+
 /**
- * A slide down the hill. Slide is not consumed. Returns everything the client needs to
- * replay it locally: distance, duration and the Wins earned (trophy positions follow
- * from the distance).
+ * A roll down the track. Health is not consumed. Returns everything the client needs
+ * to replay it locally: distance, duration, the wall that stopped it, the Wins earned
+ * (trophy positions follow from the distance) and any zone reached for the first time.
  */
-export function applySlide(profile, now) {
-  const distance = Math.round(slideDistance(profile.slide) * 10) / 10
+export function applyRoll(profile, now) {
+  const outcome = rollOutcome(profile.health)
+  const distance = Math.round(outcome.distance * 10) / 10
   const multiplier = winsMultiplier(profile, now)
-  const wins = Math.max(1, Math.round(baseSlideWins(distance) * multiplier))
+  const world = profile.world
+  const wins = Math.max(1, Math.round(baseRollWins(distance, world) * multiplier))
+  // First time into a zone: its discovery prize, paid once ever (once in each world).
+  const zone = zoneIndexAt(distance)
+  const bestKey = world === 1 ? 'bestZone2' : 'bestZone'
+  const discovered = []
+  let prize = 0
+  for (let i = profile.stats[bestKey] + 1; i <= zone; i += 1) {
+    discovered.push(i)
+    prize += WORLD_ZONES[world][i].discover
+  }
   const best = distance > profile.stats.bestDistance
-  profile.wins += wins
-  profile.stats.slides += 1
+  profile.wins += wins + prize
+  profile.stats.totalWins += wins + prize
+  profile.stats.rolls += 1
+  profile.stats.wallsBroken += outcome.broken
   profile.stats.bestDistance = Math.max(profile.stats.bestDistance, distance)
-  const duration = slideDuration(distance)
-  return { ok: true, distance, wins, multiplier, best, duration, cooldown: duration + SLIDE_RECOVERY }
+  profile.stats[bestKey] = Math.max(profile.stats[bestKey], zone)
+  const duration = rollDuration(distance)
+  return {
+    ok: true,
+    distance,
+    wins,
+    prize,
+    discovered,
+    blocked: outcome.blocked,
+    broken: outcome.broken,
+    multiplier,
+    best,
+    duration,
+    cooldown: duration + ROLL_RECOVERY,
+  }
 }
 
-/** Wins (before multipliers) of a slide at your max level: what packs and skips cost in. */
-export const maxSlideWins = (profile) => baseSlideWins(slideDistance(slideForLevel(levelCap(profile.rebirths))))
+/** Wins (before multipliers) of a roll at your max level: what packs and skips cost in. */
+export const maxRollWins = (profile) => rollWinsAt(healthForLevel(levelCap(profile.rebirths)), profile.world)
 
 /**
- * The four Slide packs as they stand for you now: `[{ amount, price }]`. Both follow
- * the Slide your next level needs, and the Wins a slide with that much Slide pays.
+ * The Health packs as they stand for you now: `[{ amount, price }]`. Both follow the
+ * Health your next level needs, and the Wins a roll with that much Health pays.
  */
-export function slidePacks(profile) {
-  const next = slideForLevel(profile.level + 1)
-  const wins = baseSlideWins(slideDistance(next))
-  return SLIDE_PACKS.map((pack) => ({
+export function healthPacks(profile) {
+  const next = healthForLevel(profile.level + 1)
+  const wins = rollWinsAt(next, profile.world)
+  return HEALTH_PACKS.map((pack) => ({
     amount: niceRound(Math.max(10, next * pack.share)),
-    price: niceRound(Math.max(5, wins * pack.slides)),
+    price: niceRound(Math.max(3, wins * pack.rolls)),
   }))
 }
 
-/** Buys Slide pack `index` with Wins. Packs ignore the level cap. */
-export function buySlidePack(profile, index) {
-  const pack = slidePacks(profile)[index]
+/** Buys Health pack `index` with Wins. Packs ignore the level cap. */
+export function buyHealthPack(profile, index) {
+  const pack = healthPacks(profile)[index]
   if (!pack) return { ok: false, error: 'Unknown pack' }
   if (profile.wins < pack.price) return { ok: false, error: 'Not enough Wins!' }
   profile.wins -= pack.price
-  profile.slide = tidy(profile.slide + pack.amount)
-  profile.stats.bestSlide = Math.max(profile.stats.bestSlide, profile.slide)
-  profile.level = levelFor(profile.slide, profile.rebirths)
+  profile.health = tidy(profile.health + pack.amount)
+  profile.stats.bestHealth = Math.max(profile.stats.bestHealth, profile.health)
+  profile.level = levelFor(profile.health, profile.rebirths)
   return { ok: true, amount: pack.amount }
 }
 
 /** Wins to rebirth now without reaching max level first. */
-export const rebirthSkipPrice = (profile) => niceRound(Math.max(50, maxSlideWins(profile) * REBIRTH_SKIP_SLIDES))
+export const rebirthSkipPrice = (profile) => niceRound(Math.max(20, maxRollWins(profile) * REBIRTH_SKIP_ROLLS))
 
 export function skipRebirth(profile) {
   if (isMaxLevel(profile)) return applyRebirth(profile)
@@ -337,32 +435,51 @@ export function skipRebirth(profile) {
   return applyRebirth(profile)
 }
 
-// --- Boards -------------------------------------------------------------------------
+// --- Worlds -------------------------------------------------------------------------
 
-export function buyBoard(profile, boardId) {
-  const board = BOARDS.find((b) => b.id === boardId)
-  if (!board) return { ok: false, error: 'Unknown board' }
-  if (profile.ownedBoards.includes(boardId)) return equipBoard(profile, boardId)
-  const previous = BOARDS[boardIndex(boardId) - 1]
-  if (previous && !profile.ownedBoards.includes(previous.id)) {
+/**
+ * Steps through the world portal: from World 1 into World 2 (opening it for good the
+ * first time you hold enough Wins - they aren't spent), or from World 2 back home.
+ */
+export function usePortal(profile) {
+  if (profile.world === 1) {
+    profile.world = 0
+    return { ok: true, world: 0 }
+  }
+  const need = WORLD_PORTALS.world2.wins
+  if (!profile.world2Unlocked && profile.wins < need) return { ok: false, error: `Need ${need} Wins`, need }
+  const first = !profile.world2Unlocked
+  profile.world2Unlocked = true
+  profile.world = 1
+  return { ok: true, world: 1, first }
+}
+
+// --- Tires --------------------------------------------------------------------------
+
+export function buyTire(profile, tireId) {
+  const tire = TIRES.find((t) => t.id === tireId)
+  if (!tire) return { ok: false, error: 'Unknown tire' }
+  if (profile.ownedTires.includes(tireId)) return equipTire(profile, tireId)
+  const previous = TIRES[tireIndex(tireId) - 1]
+  if (previous && !profile.ownedTires.includes(previous.id)) {
     return { ok: false, error: `Buy the ${previous.name} first!` }
   }
-  if (profile.wins < board.cost) return { ok: false, error: 'Not enough Wins!' }
-  profile.wins -= board.cost
-  profile.ownedBoards.push(boardId)
-  profile.equippedBoard = boardId
-  return { ok: true, bought: true, boardId }
+  if (profile.wins < tire.cost) return { ok: false, error: 'Not enough Wins!' }
+  profile.wins -= tire.cost
+  profile.ownedTires.push(tireId)
+  profile.equippedTire = tireId
+  return { ok: true, bought: true, tireId }
 }
 
-export function equipBoard(profile, boardId) {
-  if (!profile.ownedBoards.includes(boardId)) return { ok: false, error: 'You don’t own that board' }
-  profile.equippedBoard = boardId
-  return { ok: true, equipped: true, boardId }
+export function equipTire(profile, tireId) {
+  if (!profile.ownedTires.includes(tireId)) return { ok: false, error: 'You don’t own that tire' }
+  profile.equippedTire = tireId
+  return { ok: true, equipped: true, tireId }
 }
 
-/** The next board in the shop you don't have yet, or null. */
-export function nextBoard(profile) {
-  return BOARDS.find((b) => !profile.ownedBoards.includes(b.id)) || null
+/** The next tire in the showroom you don't have yet, or null. */
+export function nextTire(profile) {
+  return TIRES.find((t) => !profile.ownedTires.includes(t.id)) || null
 }
 
 // --- Pets --------------------------------------------------------------------------
@@ -460,14 +577,17 @@ export function usePotion(profile, itemId, now) {
   return { ok: true, boost: item.boost, endsAt: profile.boosts[item.boost] }
 }
 
-/** Applies a reward grant: { wins } | { item } | { pet } | { slide } | { hatch }. */
+/** Applies a reward grant: { wins } | { item } | { pet } | { health } | { hatch }. */
 export function applyGrant(profile, grant, { rand = Math.random } = {}) {
   const result = { ok: true }
-  if (grant.wins) profile.wins += grant.wins
-  if (grant.slide) {
-    profile.slide = tidy(profile.slide + grant.slide)
-    profile.stats.bestSlide = Math.max(profile.stats.bestSlide, profile.slide)
-    profile.level = levelFor(profile.slide, profile.rebirths)
+  if (grant.wins) {
+    profile.wins += grant.wins
+    profile.stats.totalWins += grant.wins
+  }
+  if (grant.health) {
+    profile.health = tidy(profile.health + grant.health)
+    profile.stats.bestHealth = Math.max(profile.stats.bestHealth, profile.health)
+    profile.level = levelFor(profile.health, profile.rebirths)
   }
   if (grant.item) addItem(profile, grant.item, grant.amount || 1)
   if (grant.pet) result.pets = [addPet(profile, grant.pet)]
@@ -550,6 +670,8 @@ export function buyShopItem(profile, productId, opts = {}) {
   if (item.kind === 'pass') {
     profile.wins -= item.price
     profile.passes[productId] = true
+    // Auto Roll switches itself on once bought.
+    if (productId === 'autoRoll') profile.settings.autoRoll = true
     return { ok: true, productId, pass: true }
   }
   const result = applyGrant(profile, item.grant || {}, opts)
@@ -557,19 +679,58 @@ export function buyShopItem(profile, productId, opts = {}) {
   return { ...result, productId }
 }
 
+// --- Boxity Gems and rewarded ads ------------------------------------------------
+
+/**
+ * Grants Gems product `sku`, already paid for in Boxity. Passes you own already turn
+ * into a Wins pack of the same worth, so nothing bought is ever wasted.
+ */
+export function applyGemProduct(profile, sku) {
+  const product = GEM_PRODUCTS[sku]
+  if (!product) return { ok: false, error: 'Unknown product' }
+  const { grant } = product
+  const result = { ok: true, sku, name: product.name }
+  if (grant.pass) {
+    if (profile.passes[grant.pass]) {
+      result.wins = Math.max(10, Math.round(maxRollWins(profile) * 20))
+    } else {
+      profile.passes[grant.pass] = true
+      if (grant.pass === 'autoRoll') profile.settings.autoRoll = true
+      result.pass = grant.pass
+    }
+  }
+  if (grant.winsRolls) result.wins = (result.wins || 0) + Math.max(25, Math.round(maxRollWins(profile) * grant.winsRolls))
+  if (result.wins) {
+    profile.wins += result.wins
+    profile.stats.totalWins += result.wins
+  }
+  for (const [itemId, amount] of Object.entries(grant.items || {})) addItem(profile, itemId, amount)
+  return result
+}
+
+/** A rewarded ad's prize for `placement`, if it's off cooldown (`session.adAt`). */
+export function applyAdReward(profile, session, placement, now) {
+  const reward = AD_REWARDS[placement]
+  if (!reward) return { ok: false, error: 'Unknown reward' }
+  session.adAt = session.adAt || {}
+  if (now - (session.adAt[placement] || 0) < reward.cooldownMs) return { ok: false, error: 'Not ready yet' }
+  session.adAt[placement] = now
+  return { ...applyGrant(profile, reward.grant), placement, label: reward.label }
+}
+
 // --- Offline progress -------------------------------------------------------------
 
-/** Slide earned while away, if the player logged off on a treadmill. */
+/** Health earned while away, if the player logged off on a training pad. */
 export function applyOfflineProgress(profile, now) {
   const away = Math.min(OFFLINE_MAX_MS, now - (profile.lastSeen || now))
-  if (profile.lastTreadmill < 0 || away < OFFLINE_MIN_MS) return null
-  if (!isTreadmillUnlocked(profile, profile.lastTreadmill) || isMaxLevel(profile)) return null
+  if (profile.lastPad < 0 || away < OFFLINE_MIN_MS) return null
+  if (!isPadUnlocked(profile, profile.lastPad) || isMaxLevel(profile)) return null
   const steps = Math.floor(away / 1000 / TRAIN_INTERVAL)
   // Potions don't run while you're away.
-  const gain = treadmillGain(profile, profile.lastTreadmill, 0)
-  const result = addSlide(profile, Math.floor(steps * gain * OFFLINE_RATE))
+  const gain = padGain(profile, profile.lastPad, 0)
+  const result = addHealth(profile, Math.floor(steps * gain * OFFLINE_RATE))
   if (result.gain <= 0) return null
-  return { slide: result.gain, ms: away }
+  return { health: result.gain, ms: away }
 }
 
 // --- Tutorial & badges ------------------------------------------------------------
@@ -577,11 +738,10 @@ export function applyOfflineProgress(profile, now) {
 /** Advances the tutorial if `event` completes the current step. */
 export function advanceTutorial(profile, event) {
   const step = TUTORIAL[profile.tutorialStep]
-  if (step && step.event === event) {
-    profile.tutorialStep += 1
-    return true
-  }
-  return false
+  if (!step || step.event !== event) return false
+  if (step.health && profile.health < step.health) return false
+  profile.tutorialStep += 1
+  return true
 }
 
 /** Awards a badge once. Returns the badge if newly awarded. */

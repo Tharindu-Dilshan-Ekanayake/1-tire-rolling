@@ -1,10 +1,10 @@
 import { useEffect } from 'react'
 
-import { BOARDS, SHOP, TREADMILLS, WORLD_PORTALS } from '@shared/balance'
-import { formatMultiplier, formatNumber } from '@shared/format'
-import { isTreadmillUnlocked } from '@shared/logic'
+import { PADS, SHOP, TIRES, WORLD_PORTALS, WORLDS } from '@shared/balance'
+import { formatNumber } from '@shared/format'
+import { isPadUnlocked } from '@shared/logic'
 
-import { padState } from '../../game/labels/lobbyLabels'
+import { standState } from '../../game/labels/lobbyLabels'
 import { actions } from '../../net/actions'
 import { buy } from '../../net/shop'
 import { useGame } from '../../store/game'
@@ -15,21 +15,25 @@ import { u } from './style'
  * One prompt at a time.
  */
 function usePrompt() {
-  const pad = useGame((s) => s.zone.pad)
-  const owned = useGame((s) => s.profile.ownedBoards)
-  const equipped = useGame((s) => s.profile.equippedBoard)
+  const stand = useGame((s) => s.zone.stand)
+  const owned = useGame((s) => s.profile.ownedTires)
+  const equipped = useGame((s) => s.profile.equippedTire)
   const atFreeReward = useGame((s) => s.zone.freeReward)
   const freeTaken = useGame((s) => s.session.freeRewardTaken)
-  const treadmillNear = useGame((s) => s.zone.treadmillNear)
-  const treadmillLocked = useGame((s) => s.zone.treadmillNear >= 0 && !isTreadmillUnlocked(s.profile, s.zone.treadmillNear))
+  const padNear = useGame((s) => s.zone.padNear)
+  const padLocked = useGame((s) => s.zone.padNear >= 0 && !isPadUnlocked(s.profile, s.zone.padNear))
   const atSphinx = useGame((s) => s.zone.sphinx)
   const atPortal = useGame((s) => s.zone.portal)
   const wins = useGame((s) => s.profile.wins)
+  const inWorld = useGame((s) => s.profile.world)
+  const unlocked = useGame((s) => s.profile.world2Unlocked)
 
+  // Walking into the portal takes you through (ticker.js); this says where to.
   if (atPortal) {
     const world = WORLD_PORTALS[atPortal]
-    return wins >= world.wins
-      ? { title: world.name, action: 'Coming soon!', run: null }
+    if (inWorld === 1) return { title: WORLDS[0].name, action: 'Step out and back in to go home', run: null }
+    return unlocked || wins >= world.wins
+      ? { title: world.name, action: `x${WORLDS[1].wins} Wins on every roll!`, run: null }
       : { title: world.name, action: `Needs ${formatNumber(world.wins)} Wins (you have ${formatNumber(wins)})`, run: null }
   }
 
@@ -37,14 +41,14 @@ function usePrompt() {
     return { title: 'Sphinx - Limited!', action: `Buy - ${formatNumber(SHOP.sphinx.price)} Wins`, run: () => buy('sphinx') }
   }
 
-  if (treadmillLocked) {
-    const treadmill = TREADMILLS[treadmillNear]
-    const title = `${treadmill.name} - ${formatMultiplier(treadmill.mult)} Slide`
-    if (treadmill.product) {
-      return { title, action: `Unlock - ${formatNumber(SHOP[treadmill.product].price)} Wins`, run: () => buy(treadmill.product) }
+  if (padLocked) {
+    const pad = PADS[padNear]
+    const title = `${pad.name} - ${formatNumber(pad.mult)}x Health`
+    if (pad.product) {
+      return { title, action: `Unlock - ${formatNumber(SHOP[pad.product].price)} Wins`, run: () => buy(pad.product) }
     }
-    const word = treadmill.rebirths === 1 ? 'Rebirth' : 'Rebirths'
-    return { title, action: `Locked: needs ${treadmill.rebirths} ${word}`, run: null }
+    const word = pad.rebirths === 1 ? 'Rebirth' : 'Rebirths'
+    return { title, action: `Locked: needs ${pad.rebirths} ${word}`, run: null }
   }
 
   if (atFreeReward) {
@@ -53,14 +57,14 @@ function usePrompt() {
       : { title: 'Free Reward', action: 'Claim', run: () => actions.claimFreeReward() }
   }
 
-  if (pad >= 0) {
-    const board = BOARDS[pad]
-    const title = `${board.name} - ${formatMultiplier(board.mult)} Slide`
-    const state = padState({ ownedBoards: owned, equippedBoard: equipped }, pad)
+  if (stand >= 0) {
+    const tire = TIRES[stand]
+    const title = `${tire.name} - +${formatNumber(tire.power)} Health`
+    const state = standState({ ownedTires: owned, equippedTire: equipped }, stand)
     if (state === 'equipped') return { title, action: 'Equipped', run: null }
-    if (state === 'owned') return { title, action: 'Equip', run: () => actions.equipBoard(board.id) }
-    if (state === 'locked') return { title, action: `Buy the ${BOARDS[pad - 1].name} first`, run: null }
-    return { title, action: `Buy - ${formatNumber(board.cost)} Wins`, run: () => actions.buyBoard(board.id) }
+    if (state === 'owned') return { title, action: 'Equip', run: () => actions.equipTire(tire.id) }
+    if (state === 'locked') return { title, action: `Buy the ${TIRES[stand - 1].name} first`, run: null }
+    return { title, action: `Buy - ${formatNumber(tire.cost)} Wins`, run: () => actions.buyTire(tire.id) }
   }
   return null
 }
@@ -71,7 +75,7 @@ function usePrompt() {
  */
 export function InteractPrompt() {
   const prompt = usePrompt()
-  const busy = useGame((s) => Boolean(s.slide || s.slideResult || s.panel))
+  const busy = useGame((s) => Boolean(s.roll || s.rollResult || s.panel))
   const run = !busy ? prompt?.run : null
 
   useEffect(() => {

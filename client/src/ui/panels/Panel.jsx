@@ -61,7 +61,8 @@ export function Panel({ title, icon, width = 920, children, footer, onClose }) {
         if (e.target === e.currentTarget) close()
       }}
     >
-      <div className="pp-panel-in relative flex flex-col items-center" style={{ width: `min(${u(width)}, 96vw)` }}>
+      {/* Room for the close button at the right, and to scroll on short screens. */}
+      <div className="pp-panel-in relative flex flex-col items-center" style={{ width: `min(${u(width)}, calc(100vw - ${u(60)} - 16px))` }}>
         <div
           className="relative w-full"
           style={{
@@ -71,7 +72,7 @@ export function Panel({ title, icon, width = 920, children, footer, onClose }) {
             background: 'linear-gradient(180deg, rgba(30, 33, 38, 0.94), rgba(18, 20, 24, 0.94))',
             border: `${u(6)} solid #0b0c0e`,
             boxShadow: `inset 0 0 0 ${u(3)} rgba(255,255,255,0.08), 0 ${u(10)} ${u(30)} rgba(0,0,0,0.35)`,
-            maxHeight: '86vh',
+            maxHeight: `calc(100vh - ${u(56)} - 24px)`,
             overflowY: 'auto',
           }}
         >

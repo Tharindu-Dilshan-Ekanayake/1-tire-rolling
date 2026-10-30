@@ -8,20 +8,24 @@ import { schema, t } from '@colyseus/schema'
 export const PlayerState = schema(
   {
     name: t.string(),
+    /** Their verified Boxity account id ('' for guests), so chat can be matched to them. */
+    uid: t.string(),
     x: t.float32(),
     y: t.float32(),
     z: t.float32(),
     rotY: t.float32(),
-    /** 'idle' | 'walk' | 'run' (on a treadmill) | 'jump' | 'slide' */
+    /** 'idle' | 'walk' | 'run' (training on a pad) | 'jump' | 'emote:<Boxity emote id>' */
     anim: t.string(),
     /** What their Bloxity avatar wears, as JSON `{ equipped, proportions }` ('' = base). */
     look: t.string(),
-    boardId: t.string(),
+    tireId: t.string(),
     /** Equipped pet species, at most 3. */
     petIds: t.array('string'),
-    slide: t.float64(),
+    health: t.float64(),
     wins: t.float64(),
     rebirths: t.uint16(),
+    /** The world they're in (balance WORLDS): players only see others in theirs. */
+    world: t.uint8(),
     level: t.uint16(),
   },
   'PlayerState',

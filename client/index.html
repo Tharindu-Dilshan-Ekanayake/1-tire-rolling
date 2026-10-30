@@ -5,11 +5,14 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#2f8ff2" />
-    <title>+1 Slide Downhill</title>
+    <title>+1 Tire Rolling</title>
 
-    <!-- Bloxity SDK. Exposes itself as window.Legion.SDK. Async so it never blocks the
-         first paint; src/bloxity/sdk.js waits for it to appear. -->
-    <script async src="https://sdk.bloxity.io/v1/legion-sdk.min.js"></script>
+    <!-- Boxity SDK. Exposes itself as window.Legion.SDK. Deliberately NOT async/defer:
+         it must have run before the game's first matchmaker request, which it tags with
+         the player's Boxity party so friends land in the same room. It reads
+         window.BLOXITY_ENV (set by the host page; in `vite dev`, injected above this tag)
+         to pick its environment. -->
+    <script src="https://sdk.bloxity.io/v1/legion-sdk.min.js"></script>
   </head>
   <body>
     <div id="root"></div>

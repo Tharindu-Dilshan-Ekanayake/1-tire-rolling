@@ -1,5 +1,5 @@
 import { runtime } from './game/runtime'
-import { slide } from './game/slide/slideControl'
+import { roll } from './game/roll/rollControl'
 import { actions } from './net/actions'
 import { remotePlayers } from './net/remotePlayers'
 import { useGame } from './store/game'
@@ -12,5 +12,5 @@ import { useQuality } from './store/quality'
 export function installDebugHooks() {
   if (typeof window === 'undefined') return
   if (!new URLSearchParams(window.location.search).has('debug')) return
-  window.__pp = { runtime, useGame, useQuality, actions, remotePlayers, slide }
+  window.__pp = { runtime, useGame, useQuality, actions, remotePlayers, roll }
 }

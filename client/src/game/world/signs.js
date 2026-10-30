@@ -1,8 +1,8 @@
 import { CanvasTexture, LinearMipmapLinearFilter, MeshBasicMaterial, PlaneGeometry, SRGBColorSpace } from 'three'
 
-import { SHOP_BOARD, SLIDE_ZONE } from '@shared/world'
+import { ROLL_ZONE, SHOP_SIGN } from '@shared/world'
 
-import { ARCH_SIGN } from './slideZone'
+import { ARCH_SIGN } from './rollZone'
 
 const FONT = '"Fredoka One", "Arial Rounded MT Bold", sans-serif'
 
@@ -70,8 +70,8 @@ function paintText(text, maxTexture, { aspect, fill, edge, slant = 0.22, worldWi
 }
 
 /**
- * The painted signs, drawn once the font has loaded: "SLIDE ZONE" across the strip at
- * the top of the hill, "SLIDE!" on the start arch and "BOARDS" on the shop's sign. Each
+ * The painted signs, drawn once the font has loaded: "ROLL ZONE" across the strip at
+ * the start of the track, "ROLL!" on the start arch and "TIRES" on the showroom's sign. Each
  * sits a couple of centimetres proud of what it's painted on, so it can't sink into it.
  *
  * @param {number} maxTexture texture size cap for the preset
@@ -80,30 +80,30 @@ function paintText(text, maxTexture, { aspect, fill, edge, slant = 0.22, worldWi
 export async function createPaintedSigns(maxTexture) {
   await document.fonts?.load(`64px ${FONT}`).catch(() => null)
 
-  const zoneWidth = SLIDE_ZONE.maxX - SLIDE_ZONE.minX - 5
-  const zone = paintText('SLIDE ZONE', maxTexture, {
+  const zoneWidth = ROLL_ZONE.maxX - ROLL_ZONE.minX - 5
+  const zone = paintText('ROLL ZONE', maxTexture, {
     aspect: 0.24,
     fill: ['#ffffff', '#ffffff', '#e6ecf5'],
     edge: '#9aa6b8',
     worldWidth: zoneWidth,
   })
   // Just above the strip's raised yellow fill (its top is 0.1 up), read from the plaza.
-  zone.position = [0, 0.13, (SLIDE_ZONE.minZ + SLIDE_ZONE.maxZ) / 2 + 0.3]
+  zone.position = [0, 0.13, (ROLL_ZONE.minZ + ROLL_ZONE.maxZ) / 2 + 0.3]
   zone.rotation = [-Math.PI / 2, 0, 0]
 
-  const boardWidth = SHOP_BOARD.maxZ - SHOP_BOARD.minZ - 3
-  const board = paintText('BOARDS', maxTexture, {
+  const boardWidth = SHOP_SIGN.maxZ - SHOP_SIGN.minZ - 3
+  const board = paintText('TIRES', maxTexture, {
     aspect: 0.26,
     fill: ['#fffbd0', '#ffd21f', '#ff8a00'],
     edge: '#c2410c',
     slant: 0.14,
     worldWidth: boardWidth,
   })
-  // On the board's navy face (0.4 west of its centre line), turned to the plaza.
-  board.position = [SHOP_BOARD.x - 0.43, SHOP_BOARD.top - 4.1, (SHOP_BOARD.minZ + SHOP_BOARD.maxZ) / 2]
+  // On the sign's navy face (0.4 west of its centre line), turned to the plaza.
+  board.position = [SHOP_SIGN.x - 0.43, SHOP_SIGN.top - 4.1, (SHOP_SIGN.minZ + SHOP_SIGN.maxZ) / 2]
   board.rotation = [0, -Math.PI / 2, 0]
 
-  const arch = paintText('SLIDE!', maxTexture, {
+  const arch = paintText('ROLL!', maxTexture, {
     aspect: 0.3,
     fill: ['#fffbd0', '#ffd21f', '#ff8a00'],
     edge: '#c2410c',

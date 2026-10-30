@@ -1,12 +1,17 @@
+import { TIRES, TUTORIAL, WORLDS } from '@shared/balance'
+import { formatNumber } from '@shared/format'
+
 import { sfx } from '../audio/sfx'
 import { burst, queueTrainFx } from '../game/fx/fxQueue'
 import { runtime } from '../game/runtime'
-import { beginSlide, slide } from '../game/slide/slideControl'
+import { beginRoll, roll } from '../game/roll/rollControl'
 import { getGame } from '../store/game'
+import { fadeThrough } from '../ui/fade'
+import { refreshRemoteWorlds } from './remotePlayers'
 
-/** A point above wherever you're drawn: the lobby, or down the hill mid-slide. */
+/** A point above wherever you're watching: you in the lobby, or your rolling tire. */
 const atPlayer = (dy = 1.2) => {
-  const p = slide.active ? slide.position : runtime.player.position
+  const p = roll.active ? roll.position : runtime.player.position
   return { x: p.x, y: p.y + dy, z: p.z }
 }
 
@@ -20,23 +25,30 @@ export function handleServerEvent(type, payload) {
     case 'profile': {
       const before = game.profile
       game.setProfile(payload.profile, payload.session)
+      if ((payload.profile.world || 0) !== (before.world || 0)) refreshRemoteWorlds()
       // Celebrate the big moments, whatever caused them.
       if (game.profileLoaded && payload.profile.rebirths > before.rebirths) {
         sfx.rebirth()
         burst({ ...atPlayer(), count: 60, speed: 9 })
-      } else if (game.profileLoaded && payload.profile.ownedBoards.length > before.ownedBoards.length) {
+      } else if (game.profileLoaded && payload.profile.ownedTires.length > before.ownedTires.length) {
+        // A new tire: a shower of confetti and its name up in lights.
         sfx.buy()
-        burst({ ...atPlayer(2.5), count: 30, palette: 'gold' })
+        sfx.wins()
+        burst({ ...atPlayer(2.5), count: 60, palette: 'confetti', speed: 9 })
+        const tire = TIRES.find((t) => t.id === payload.profile.equippedTire)
+        // The first tire bought ends the tutorial: say so too.
+        const done = before.tutorialStep < TUTORIAL.length && payload.profile.tutorialStep >= TUTORIAL.length
+        if (tire) game.showToast(`NEW TIRE: ${tire.name}!${done ? ' Tutorial complete - have fun!' : ''}`)
       }
       break
     }
 
     case 'train':
       game.patchProfile({
-        slide: payload.slide,
+        health: payload.health,
         level: payload.level,
-        // Gains from sliding and walking aren't treadmill training.
-        ...(payload.source === 'tread' ? { lastTreadmill: payload.treadmill } : {}),
+        // Gains from rolling and walking aren't pad training.
+        ...(payload.source === 'pad' ? { lastPad: payload.pad } : {}),
       })
       queueTrainFx(payload)
       if (payload.leveledUp) {
@@ -45,9 +57,9 @@ export function handleServerEvent(type, payload) {
       }
       break
 
-    case 'slide':
-      sfx.boardPop()
-      beginSlide(payload)
+    case 'roll':
+      sfx.tirePop()
+      beginRoll(payload)
       break
 
     case 'pack':
@@ -71,6 +83,24 @@ export function handleServerEvent(type, payload) {
 
     case 'badge':
       sfx.wins()
+      break
+
+    case 'world': {
+      // Through the portal: a flash of white while the new world's sky and track go
+      // in (GameScene follows profile.world), and a fanfare.
+      fadeThrough(() => {})
+      sfx.rebirth()
+      burst({ ...atPlayer(2), count: 60, palette: 'confetti', speed: 9 })
+      const world = WORLDS[payload.world]
+      game.showToast(payload.world === 1 ? `WELCOME TO ${world.name.toUpperCase()}! x${world.wins} Wins on every roll!` : `Back in ${world.name}!`)
+      break
+    }
+
+    case 'reward':
+      // A rewarded ad or a Gems purchase landed.
+      sfx.buy()
+      burst({ ...atPlayer(2), count: 40, palette: 'gold', speed: 8 })
+      game.showToast(`${payload.label}${payload.wins ? ` +${formatNumber(payload.wins)} Wins` : ''}!`)
       break
 
     default:

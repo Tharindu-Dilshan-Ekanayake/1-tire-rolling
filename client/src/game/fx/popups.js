@@ -3,10 +3,10 @@ import { Vector3 } from 'three'
 /**
  * Floating "+12 POWER" text: a fixed pool of DOM elements (max 10 alive), positioned
  * by projecting a world point each frame. When the pool is full the oldest popup is
- * recycled, so a fast treadmill can never pile up elements.
+ * recycled, so a fast pad can never pile up elements.
  *
- * While you slide they're pinned to the screen instead (see spawnScattered), scattered
- * about it rather than chasing the rider round.
+ * While your tire rolls they're pinned to the screen instead (see spawnScattered),
+ * scattered about it rather than chasing the tire round.
  */
 
 export const POPUP_POOL_SIZE = 10
@@ -93,12 +93,12 @@ export function spawnPopup(text, position, style = {}) {
   slot.el.style.display = 'flex'
 }
 
-// --- Scattered over the screen while you slide -------------------------------------------
+// --- Scattered over the screen while your tire rolls --------------------------------------
 
 /**
  * The scatter area (reference px, the 1920x1080 layout): this far either side of the
  * middle, from this far down from the top to this far up from the bottom - below the
- * distance counter, above the Slide bar.
+ * distance counter, above the Health bar.
  */
 const SCATTER_HALF_WIDTH = 620
 const SCATTER_TOP = 350

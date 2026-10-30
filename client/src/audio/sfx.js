@@ -10,6 +10,8 @@ import { createMusic } from './music'
  */
 
 const MUTE_KEY = 'pp.muted'
+/** Master gain at full volume; everything is mixed to sit under this. */
+const BASE_GAIN = 0.5
 
 let ctx = null
 let master = null
@@ -17,7 +19,16 @@ let master = null
 let echo = null
 let noiseBuffer = null
 let music = null
+/** The player's own mute button (persisted). */
 let muted = readMuted()
+/**
+ * Muted for a Boxity ad break. Kept apart from `muted` so the break ending restores
+ * whatever the player had chosen, never overwrites it.
+ */
+let adMuted = false
+/** Boxity's master_volume / music_volume settings, 0..1 (not persisted: Boxity keeps them). */
+let masterVolume = 1
+let musicVolume = 1
 const lastPlayed = new Map()
 const muteListeners = new Set()
 
@@ -29,16 +40,22 @@ function readMuted() {
   }
 }
 
+const silent = () => muted || adMuted
+
+function applyMaster() {
+  if (master) master.gain.value = silent() ? 0 : BASE_GAIN * masterVolume
+}
+
 function unlock() {
   if (ctx) {
-    if (ctx.state === 'suspended') ctx.resume()
+    if (ctx.state === 'suspended' && !adMuted) ctx.resume()
     return
   }
   const Ctor = window.AudioContext || window.webkitAudioContext
   if (!Ctor) return
   ctx = new Ctor()
   master = ctx.createGain()
-  master.gain.value = muted ? 0 : 0.5
+  applyMaster()
   master.connect(ctx.destination)
   echo = createEcho()
   // One second of white noise, reused by every whoosh and crack.
@@ -46,7 +63,9 @@ function unlock() {
   const data = noiseBuffer.getChannelData(0)
   for (let i = 0; i < data.length; i += 1) data[i] = Math.random() * 2 - 1
   music = createMusic(ctx, master, noiseBuffer)
+  music.setVolume(musicVolume)
   music.start()
+  if (adMuted) ctx.suspend()
 }
 
 /**
@@ -79,7 +98,7 @@ export function installAudioUnlock() {
   for (const e of events) window.addEventListener(e, handler, true)
   // Mobile browsers suspend audio in the background; resume on return.
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible' && ctx?.state === 'suspended') ctx.resume()
+    if (document.visibilityState === 'visible' && ctx?.state === 'suspended' && !adMuted) ctx.resume()
   })
 }
 
@@ -94,8 +113,35 @@ export function setMuted(value) {
   } catch {
     // Not persisted; fine.
   }
-  if (master) master.gain.value = muted ? 0 : 0.5
+  applyMaster()
   for (const listener of muteListeners) listener(muted)
+}
+
+const clampVolume = (v) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : 1)
+
+/** Overall volume 0..1 (Boxity's master_volume setting). */
+export function setMasterVolume(volume) {
+  masterVolume = clampVolume(volume)
+  applyMaster()
+}
+
+/** Music volume 0..1 (Boxity's music_volume setting), on top of the master volume. */
+export function setMusicVolume(volume) {
+  musicVolume = clampVolume(volume)
+  music?.setVolume(musicVolume)
+}
+
+/**
+ * Silences everything for a Boxity ad break, and suspends the audio clock so the music
+ * scheduler doesn't pile notes up behind it. Ending the break restores the player's
+ * own mute choice and volumes exactly as they were.
+ */
+export function setAdBreakMuted(on) {
+  adMuted = Boolean(on)
+  applyMaster()
+  if (!ctx) return
+  if (adMuted) ctx.suspend()
+  else if (ctx.state === 'suspended' && document.visibilityState === 'visible') ctx.resume()
 }
 
 /** Calls `listener(muted)` on every change; returns the unsubscribe. */
@@ -104,15 +150,15 @@ export function onMutedChange(listener) {
   return () => muteListeners.delete(listener)
 }
 
-// --- The ride: the sound of the board going down the hill -----------------------------
+// --- The roll: the sound of the tire rumbling down the track ----------------------------
 
 let ride = null
 let rideSetAt = 0
 
 /**
  * One looping noise source through three bands: the rush of air (swelling with speed,
- * loudest in the air), the board rumbling over the ground (its bumps quickening with
- * speed, silent in the air) and the hiss of its edge carving (up as it skids). The
+ * loudest in the air), the tire rumbling over the ground (its bumps quickening with
+ * speed, silent in the air) and the hiss of its tread scrubbing (up as it skids). The
  * music ducks under it until `windStop`.
  */
 function windStart() {
@@ -146,7 +192,7 @@ function windStart() {
 }
 
 /**
- * `level` 0..1 from your speed down the hill; `airborne` off a ramp; `skid` the board's
+ * `level` 0..1 from the tire's speed down the track; `airborne` off a ramp; `skid` its
  * sideways skid (radians). Positional, not an object: it's called every frame.
  */
 function windSet(level, airborne = false, skid = 0) {
@@ -183,7 +229,7 @@ function windStop() {
 }
 
 function ready(name, minGapMs = 0) {
-  if (!ctx || muted || ctx.state !== 'running') return false
+  if (!ctx || silent() || ctx.state !== 'running') return false
   const now = performance.now()
   if (minGapMs && now - (lastPlayed.get(name) || 0) < minGapMs) return false
   lastPlayed.set(name, now)
@@ -246,25 +292,36 @@ export const sfx = {
   click() {
     if (ready('click', 40)) tone(660, { type: 'triangle', duration: 0.05, volume: 0.15 })
   },
-  /** A Slide gain: a bright tick, softer for the ones that trickle in down the hill. */
-  gain(sliding = false) {
-    if (ready('gain', 110)) tone(880 + Math.random() * 120, { type: 'triangle', duration: 0.07, volume: sliding ? 0.05 : 0.07, slideTo: 1400 })
+  /** A Health gain: a bright tick, softer for the ones that trickle in while you train. */
+  gain(soft = false) {
+    if (ready('gain', 110)) tone(880 + Math.random() * 120, { type: 'triangle', duration: 0.07, volume: soft ? 0.05 : 0.07, slideTo: 1400 })
   },
   levelUp() {
     if (!ready('levelUp')) return
     ;[523, 659, 784, 1047].forEach((f, i) => tone(f, { type: 'square', at: i * 0.07, duration: 0.14, volume: 0.09 }))
   },
-  /** Pushing off down the hill: a kick, a whoosh, a rising boing and a sparkle. */
-  slideStart() {
-    if (!ready('slideStart')) return
+  /** Your tire setting off down the track: a kick, a whoosh, a rising boing and a sparkle. */
+  rollStart() {
+    if (!ready('rollStart')) return
     tone(110, { duration: 0.18, volume: 0.16, slideTo: 55 })
     noise({ duration: 0.7, volume: 0.3, from: 250, to: 3000, q: 0.8 })
     tone(220, { type: 'triangle', duration: 0.32, volume: 0.09, slideTo: 660 })
     bell(1319, { at: 0.2, volume: 0.05, decay: 0.3 })
   },
-  /** The board popping out in front of you when you press SLIDE: a springy bloop. */
-  boardPop() {
-    if (!ready('boardPop', 200)) return
+  /** The leg swinging back and through, just before the kick lands: a quick swish. */
+  kickSwing() {
+    if (ready('kickSwing', 200)) noise({ duration: 0.22, volume: 0.1, from: 600, to: 2200, q: 0.7 })
+  },
+  /** The foot meeting the tire: a fat thump and a squeak of rubber. */
+  kick() {
+    if (!ready('kick', 200)) return
+    tone(130, { duration: 0.2, volume: 0.28, slideTo: 48 })
+    noise({ duration: 0.07, volume: 0.3, from: 1800, to: 500, q: 0.8 })
+    tone(900, { type: 'triangle', at: 0.01, duration: 0.09, volume: 0.07, slideTo: 420 })
+  },
+  /** The tire popping out in front of you when you press ROLL: a springy bloop. */
+  tirePop() {
+    if (!ready('tirePop', 200)) return
     tone(420, { type: 'sine', duration: 0.16, volume: 0.14, slideTo: 980 })
     tone(1320, { type: 'triangle', at: 0.08, duration: 0.1, volume: 0.06 })
   },
@@ -272,14 +329,53 @@ export const sfx = {
   jumpWhoosh() {
     if (ready('jumpWhoosh', 250)) noise({ duration: 0.4, volume: 0.18, from: 500, to: 2600, q: 0.9 })
   },
-  /** The board slapping back down after a jump: a thump and a crunch of snow. */
-  boardLand() {
-    if (!ready('boardLand', 250)) return
+  /** The tire slapping back down after a jump: a thump and a crunch of gravel. */
+  tireLand() {
+    if (!ready('tireLand', 250)) return
     tone(160, { type: 'sine', duration: 0.2, volume: 0.18, slideTo: 55 })
     noise({ duration: 0.24, volume: 0.13, from: 2400, to: 300, q: 0.6 })
   },
   /**
-   * A trophy slid through: a bell that climbs the scale and back down while they keep
+   * The tire smashing through a wooden wall: a crunch of splintering noise over a low
+   * thump, then a few high clattering clicks of falling planks (~0.4 s).
+   */
+  wallSmash(combo = 1) {
+    if (!ready('wallSmash', 120)) return
+    // The hit: a deep boom and a sharp wooden crack.
+    tone(95, { duration: 0.26, volume: 0.24, slideTo: 40 })
+    noise({ duration: 0.08, volume: 0.4, from: 5200, to: 1800, q: 0.6 })
+    noise({ duration: 0.22, volume: 0.32, from: 3200, to: 700, q: 0.7 })
+    noise({ duration: 0.4, volume: 0.12, from: 900, to: 260, q: 1.1 })
+    // The pieces raining down: a clatter of little wooden clicks.
+    for (let i = 0; i < 9; i += 1) {
+      tone(1200 + Math.random() * 2200, { type: 'square', at: 0.08 + i * 0.045 + Math.random() * 0.03, duration: 0.025, volume: 0.035 })
+    }
+    // A bright 'ding' that climbs with every wall smashed in a row: the combo.
+    const step = Math.min(combo - 1, 10)
+    const f = 523 * Math.pow(2, (step * 2) / 12)
+    tone(f, { type: 'triangle', at: 0.04, duration: 0.18, volume: 0.09, echo: true })
+    tone(f * 1.5, { type: 'triangle', at: 0.1, duration: 0.22, volume: 0.06, echo: true })
+  },
+  /** A new stage reached mid-roll: a quick, cheerful rising jingle. */
+  stageUp() {
+    if (!ready('stageUp', 300)) return
+    ;[659, 784, 988, 1319].forEach((f, i) => tone(f, { type: 'triangle', at: i * 0.06, duration: 0.16, volume: 0.08, echo: true }))
+    for (let i = 0; i < 3; i += 1) bell(1760 + Math.random() * 900, { at: 0.24 + i * 0.05, volume: 0.03, decay: 0.18 })
+  },
+  /** Trophies landing in the Wins counter: little coin pings, one after another. */
+  coins(count = 8) {
+    if (!ready('coins', 400)) return
+    for (let i = 0; i < count; i += 1) bell(1900 + (i % 4) * 230, { at: 0.55 + i * 0.07, volume: 0.04, decay: 0.12 })
+  },
+  /** The tire hitting a wall it can't break: a dull, heavy thud and a short low boing (~0.35 s). */
+  wallBlock() {
+    if (!ready('wallBlock', 150)) return
+    tone(70, { duration: 0.28, volume: 0.24, slideTo: 38 })
+    noise({ duration: 0.12, volume: 0.14, from: 500, to: 150, q: 0.9 })
+    tone(150, { type: 'triangle', at: 0.05, duration: 0.3, volume: 0.07, slideTo: 95 })
+  },
+  /**
+   * A trophy rolled through: a bell that climbs the scale and back down while they keep
    * coming, so a run of them plays a little tune.
    */
   trophy() {
@@ -291,7 +387,7 @@ export const sfx = {
     const k = trophyRun % (2 * n - 2)
     bell(TROPHY_SCALE[k < n ? k : 2 * n - 2 - k], { volume: 0.085, decay: 0.32 })
   },
-  /** Wins paid out (a slide's total, a badge): a fanfare, a shimmering chord and a shower of coins. */
+  /** Wins paid out (a roll's total, a badge): a fanfare, a shimmering chord and a shower of coins. */
   wins() {
     if (!ready('wins')) return
     ;[784, 988, 1175, 1568].forEach((f, i) => tone(f, { type: 'triangle', at: i * 0.07, duration: 0.2, volume: 0.1, echo: true }))
@@ -324,7 +420,7 @@ export const sfx = {
     noise({ duration: 0.8, volume: 0.15, from: 200, to: 4000, q: 0.6 })
     ;[262, 330, 392, 523, 659, 784].forEach((f, i) => tone(f, { type: 'sawtooth', at: 0.1 + i * 0.07, duration: 0.25, volume: 0.06 }))
   },
-  /** Stepping onto an unlocked treadmill: a soft rising chime. */
+  /** Stepping onto an unlocked training pad: a soft rising chime. */
   treadmillEnter() {
     if (!ready('treadmillEnter', 400)) return
     ;[523, 784, 1047].forEach((f, i) => tone(f, { type: 'sine', at: i * 0.05, duration: 0.28, volume: 0.07 }))
@@ -340,12 +436,12 @@ export const sfx = {
     noise({ duration: 0.08, volume: 0.06, from: 900, to: 300, q: 0.7 })
   },
   /**
-   * The skid to a stop, timed to end as you do: snow spraying off the board's edge
-   * (bright, then darker as it slows), the board grinding under it, then a bump and a
-   * little bounce as you stop.
+   * The tire skidding to a stop, timed to end as it does: grit spraying off the tread
+   * (bright, then darker as it slows), the rubber grinding under it, then a bump and a
+   * little bounce as it settles.
    */
-  slideStop() {
-    if (!ready('slideStop')) return
+  rollStop() {
+    if (!ready('rollStop')) return
     noise({ duration: 0.85, volume: 0.2, from: 5200, to: 700, q: 0.5 })
     noise({ duration: 0.8, volume: 0.12, from: 380, to: 120, q: 0.9 })
     tone(130, { at: 0.82, duration: 0.22, volume: 0.16, slideTo: 60 })
@@ -355,3 +451,9 @@ export const sfx = {
   windSet,
   windStop,
 }
+
+// The template's names, kept as aliases while callers move over to the tire ones.
+sfx.slideStart = sfx.rollStart
+sfx.slideStop = sfx.rollStop
+sfx.boardPop = sfx.tirePop
+sfx.boardLand = sfx.tireLand

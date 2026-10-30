@@ -6,6 +6,8 @@ import { createRoot } from 'react-dom/client'
 import App from './App.jsx'
 import { installAudioUnlock, sfx } from './audio/sfx'
 import BloxityProvider from './bloxity/BloxityProvider.jsx'
+import FpsMeter from './bloxity/FpsMeter.jsx'
+import { GAME_SLUG } from './bloxity/identity'
 import { installDebugHooks } from './debug'
 import './index.css'
 
@@ -22,8 +24,10 @@ window.addEventListener('pointerdown', (e) => {
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     {/* Slug comes from VITE_GAME_SLUG in client/.env — see .env.example. */}
-    <BloxityProvider gameSlug={import.meta.env.VITE_GAME_SLUG}>
+    <BloxityProvider gameSlug={GAME_SLUG}>
       <App />
+      {/* Boxity's show_fps setting. */}
+      <FpsMeter />
     </BloxityProvider>
   </StrictMode>,
 )

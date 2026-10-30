@@ -15,6 +15,8 @@ import { getActiveLabelBatch, setActiveLabelBatch } from './registry'
 export function WorldLabels() {
   const maxDistance = useQuality((s) => s.settings.labelDistance)
   const playable = useGame((s) => s.playable)
+  // The portal's sign says where it goes, so the signs are rebuilt in a new world.
+  const world = useGame((s) => s.profile.world)
   const gl = useThree((s) => s.gl)
   const camera = useThree((s) => s.camera)
   const scene = useThree((s) => s.scene)
@@ -38,8 +40,9 @@ export function WorldLabels() {
         return next.build()
       })
       // Compile the label shader before the signs appear, so showing them can't stall
-      // a frame.
-      .then((meshes) => (meshes ? gl.compileAsync(new Group().add(...meshes), camera, scene).catch(() => null) : null))
+      // a frame. (A batch thrown away mid-build - the view rebuilt for a new graphics
+      // level - comes back empty: nothing to compile.)
+      .then((meshes) => (!cancelled && meshes?.length ? gl.compileAsync(new Group().add(...meshes), camera, scene).catch(() => null) : null))
       .then(() => {
         performance.mark('pp:labels-end')
         if (cancelled) return
@@ -51,7 +54,7 @@ export function WorldLabels() {
       if (getActiveLabelBatch() === next) setActiveLabelBatch(null)
       next.dispose()
     }
-  }, [playable, gl, camera, scene])
+  }, [playable, world, gl, camera, scene])
 
   useEffect(() => {
     batch?.setMaxDistance(maxDistance)

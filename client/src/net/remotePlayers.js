@@ -1,6 +1,7 @@
 import { Vector3 } from 'three'
 
 import { runtime } from '../game/runtime'
+import { getGame } from '../store/game'
 
 /**
  * Other players, as the network last described them. Network callbacks write here;
@@ -13,18 +14,29 @@ export const remotePlayers = new Map()
 
 const MAX_SNAPSHOTS = 24
 
+/** Everyone's synced state, whichever world they're in, so a change of world can redraw them. */
+const latest = new Map()
+
 export function upsertRemotePlayer(sessionId, state) {
+  latest.set(sessionId, state)
+  // Only players in your world are drawn: each world feels like its own place.
+  if ((state.world || 0) !== (getGame().profile.world || 0)) {
+    dropRemotePlayer(sessionId)
+    return
+  }
   let r = remotePlayers.get(sessionId)
   if (!r) {
     r = {
       sessionId,
       name: '',
+      /** Their verified Boxity user id ('' for guests): matches Boxity chat to them. */
+      uid: '',
       snaps: [],
       position: new Vector3(state.x, state.y, state.z),
       yaw: state.rotY,
       speed: 0,
       anim: 'idle',
-      boardId: 'wood',
+      tireId: 'bicycle',
       /** Their avatar's outfit, parsed from `look`; `lookKey` is the raw string. */
       look: null,
       lookKey: '',
@@ -38,8 +50,9 @@ export function upsertRemotePlayer(sessionId, state) {
     remotePlayers.set(sessionId, r)
   }
   r.name = state.name
+  r.uid = state.uid || ''
   r.anim = state.anim
-  r.boardId = state.boardId
+  r.tireId = state.tireId
   if (state.look !== r.lookKey) {
     r.lookKey = state.look
     try {
@@ -59,16 +72,27 @@ export function upsertRemotePlayer(sessionId, state) {
   }
 }
 
+/** You changed world: shows the players in the new one, hides the rest. */
+export function refreshRemoteWorlds() {
+  for (const [sessionId, state] of latest) upsertRemotePlayer(sessionId, state)
+}
+
 export function removeRemotePlayer(sessionId) {
+  latest.delete(sessionId)
+  dropRemotePlayer(sessionId)
+}
+
+function dropRemotePlayer(sessionId) {
   const r = remotePlayers.get(sessionId)
   if (!r) return
   runtime.shadowCasters.delete(r.shadow)
-  runtime.ghostSlides.delete(sessionId)
+  runtime.ghostRolls.delete(sessionId)
   remotePlayers.delete(sessionId)
 }
 
 export function clearRemotePlayers() {
   for (const id of [...remotePlayers.keys()]) removeRemotePlayer(id)
+  latest.clear()
   runtime.remotePets.length = 0
-  runtime.ghostSlides.clear()
+  runtime.ghostRolls.clear()
 }

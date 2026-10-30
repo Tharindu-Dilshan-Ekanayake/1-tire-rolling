@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 
 import { BloxityContext } from './BloxityContext'
+import { GAME_SLUG } from './identity'
+import { installIntegration, setupOnce } from './integration'
 import { getSDK, safeCall, toUnsubscribe, waitForSDK } from './sdk'
+import { onAccountChanged } from './services'
 import { DEFAULT_PROPORTIONS, useBloxityStore } from './store'
 
 /**
@@ -34,26 +37,20 @@ function isResetSentinel(equipped) {
 }
 
 /**
- * Bloxity's real endpoints.
- *
- * These MUST be passed explicitly. If `init()` receives neither `apiUrl` nor
- * `portalUrl`, the SDK checks whether it is running on localhost/127.0.0.1 and, if
- * so, silently repoints BOTH at `window.location.origin` - i.e. at the Vite dev
- * server. `showAuthPopup()` then opens `http://localhost:5173/auth?popup=1`, Vite's
- * SPA fallback serves the game again inside the popup, no token is ever posted back,
- * and login can never succeed. That fallback is meant for people running the whole
- * Bloxity portal locally; for game development it has to be overridden.
+ * `init()` gets the game slug and nothing else: the SDK finds Boxity's endpoints itself
+ * from `window.BLOXITY_ENV` (set by the host page; in `vite dev`, by the plugin in
+ * vite.config.js), falling back to production. See env.js - nothing here passes or
+ * guesses URLs.
  */
-const PORTAL_URL = import.meta.env.VITE_BLOXITY_PORTAL_URL || 'https://bloxity.io'
-const API_URL = import.meta.env.VITE_BLOXITY_API_URL || 'https://api.bloxity.io'
-
 function initOnce(gameSlug) {
   if (!initPromise) {
     // No abort signal: this promise is shared by every mount (StrictMode mounts twice in
     // dev), so one mount's cleanup must not cancel it for the next. Each caller ignores
     // a late result through its own `cancelled` flag instead.
     initPromise = waitForSDK().then((sdk) => {
-      sdk.init({ gameSlug, apiUrl: API_URL, portalUrl: PORTAL_URL })
+      sdk.init({ gameSlug })
+      // Once per page: features and leaderboards (integration.js).
+      setupOnce(sdk)
       return sdk
     })
     // A failed init shouldn't poison every later attempt (e.g. HMR reload).
@@ -73,8 +70,8 @@ function initOnce(gameSlug) {
  */
 export function BloxityProvider({ gameSlug, children }) {
   // >>> FILL ME IN <<< Set VITE_GAME_SLUG in client/.env to the slug from your
-  // Bloxity developer dashboard. The `gameSlug` prop overrides it if passed.
-  const slug = gameSlug || import.meta.env.VITE_GAME_SLUG || 'MY_GAME_SLUG'
+  // Bloxity developer dashboard (see identity.js). The `gameSlug` prop overrides it.
+  const slug = gameSlug || GAME_SLUG
 
   const status = useBloxityStore((s) => s.status)
   const error = useBloxityStore((s) => s.error)
@@ -113,6 +110,8 @@ export function BloxityProvider({ gameSlug, children }) {
           toUnsubscribe(
             sdk.auth.onUserChanged((nextUser) => {
               useBloxityStore.getState().setUser(nextUser || null)
+              // Friends and the Gems balance belong to the account (services.js).
+              onAccountChanged(nextUser || null)
               // The guest identity is what the HUD falls back to when signed out.
               useBloxityStore
                 .getState()
@@ -165,6 +164,9 @@ export function BloxityProvider({ gameSlug, children }) {
         if (!s.equipped) {
           s.setEquipped(safeCall(sdk.avatar.getEquipped?.bind(sdk.avatar)) || null)
         }
+
+        // Ads, settings, portal events, chat, lifecycle (integration.js).
+        unsubscribers.push(installIntegration(sdk))
 
         useBloxityStore.getState().setStatus('ready')
       })

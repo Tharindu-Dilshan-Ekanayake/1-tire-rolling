@@ -28,7 +28,7 @@ export function PopupLayer() {
           className="absolute left-0 top-0 items-center whitespace-nowrap"
           style={{ display: 'none', fontSize: u(40), gap: u(4), willChange: 'transform, opacity' }}
         >
-          <img src={iconUrl('slide')} alt="" style={{ width: u(46), height: u(46) }} />
+          <img src={iconUrl('heart')} alt="" style={{ width: u(46), height: u(46) }} />
           <span className="pp-text">
             <span data-popup-text aria-hidden="true" className="pp-text-stroke" style={{ WebkitTextStrokeWidth: u(9) }} />
             <span

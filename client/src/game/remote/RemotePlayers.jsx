@@ -2,27 +2,25 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useMemo, useRef } from 'react'
 import { Color, Matrix4, Quaternion, Vector3 } from 'three'
 
-import { SLIDE_RECOVERY } from '@shared/balance'
-
 import { remotePlayers } from '../../net/remotePlayers'
 import { getQuality } from '../../store/quality'
 import { createBoxInstances, disposeBlocks } from '../blocks'
-import { boardGlow, createBoardMesh, disposeBoardMesh } from '../board'
-import { createGlowInstances, disposeGlow } from '../glow'
 import { sharedMaterials, STYLE } from '../materials'
+import { PAD_FLAT, PAD_TIRE_SIZE, padBounce, padTireTop } from '../padBounce'
 import { runtime } from '../runtime'
-import { BOARD_QUAT, createRideState, FACE_DOWNHILL, meterAtZ, riderBody, rideState, rideTurn, standSide } from '../slide/path'
+import { createTireMesh, disposeTireMesh, tireWidth } from '../tire'
 import { hideNameplatesFrom, NAMEPLATE_POOL_SIZE, placeNameplate } from './nameplates'
 
 /** Remote players are drawn this far in the past, so 10 Hz updates interpolate. */
 const INTERP_DELAY_MS = 110
 const MAX_REMOTES = 8
 const PARTS = 6
-/** Ghost riders are drawn this much further away than people in the lobby. */
-const RIDER_DISTANCE_SCALE = 2
 const S = 0.36
-/** Facing a treadmill's console, as your own character does. */
-const TREADMILL_YAW = -Math.PI / 2
+/** Training on a pad, facing out over the plaza, as your own character does. */
+const PAD_YAW = Math.PI / 2
+/** A tire lying flat: its axle turned from X to straight up. */
+const LIE_FLAT = new Quaternion().setFromAxisAngle(new Vector3(0, 0, 1), Math.PI / 2)
+const bounce = { height: 0, vy: 0, squash: 0 }
 
 /** Classic blocky figure, in studs-scaled units: [x, y(pivot), size, hangs from pivot]. */
 const PART_LAYOUT = [
@@ -46,9 +44,6 @@ function hashString(s) {
   return h >>> 0
 }
 
-/** Each rider keeps to their own line down the canyon, so riders don't overlap. */
-const riderLane = (sessionId) => ((hashString(sessionId) % 7) - 3) * 1.6
-
 const _m = new Matrix4()
 const _base = new Matrix4()
 const _local = new Matrix4()
@@ -61,11 +56,6 @@ const _up = new Vector3(0, 1, 0)
 const _target = new Vector3()
 const _dir = new Vector3()
 const _prev = new Vector3()
-const _rider = new Vector3()
-const _feet = new Vector3()
-const _glowAt = new Matrix4().makeTranslation(0, 0.05, 0.1)
-const _qRide = new Quaternion()
-const _qBody = new Quaternion()
 
 function lerpAngle(a, b, t) {
   let d = b - a
@@ -93,7 +83,7 @@ function interpolate(r, renderTime) {
 
 /**
  * Writes one blocky figure's six parts from `base` (its feet), limbs swung by `swing`
- * (and arms by `armSwing`, for the riding grip). Returns the next free instance.
+ * (and arms by `armSwing`, if given). Returns the next free instance.
  */
 function writeFigure(body, instance, r, base, swing, armSwing) {
   const h = hashString(r.sessionId)
@@ -119,13 +109,13 @@ function writeFigure(body, instance, r, base, swing, armSwing) {
 }
 
 /** Puts a name tag over `at`, if it's on screen; returns the next free tag. */
-function writeNameplate(plate, name, at, distance, maxDistance, camera, size) {
+function writeNameplate(plate, name, at, distance, maxDistance, camera, size, uid) {
   if (plate >= NAMEPLATE_POOL_SIZE) return plate
   if (distance < maxDistance) {
     _v.copy(at).project(camera)
     if (_v.z < 1) {
       const fade = Math.min(1, (maxDistance - distance) / 6)
-      placeNameplate(plate, name, (_v.x * 0.5 + 0.5) * size.width, (-_v.y * 0.5 + 0.5) * size.height, fade)
+      placeNameplate(plate, name, (_v.x * 0.5 + 0.5) * size.width, (-_v.y * 0.5 + 0.5) * size.height, fade, uid)
       return plate + 1
     }
   }
@@ -136,30 +126,29 @@ function writeNameplate(plate, name, at, distance, maxDistance, camera, size) {
 /**
  * Everyone else in the lobby: blocky avatars (one InstancedMesh for every limb of every
  * player), name tags and their pets (handed to the shared pet renderer). While someone
- * slides they ride down the canyon as a ghost rider on their own board, replayed from
- * the slide the server told us about. Hidden past the preset's draw distance.
+ * rolls they stay on the Roll Zone, watching; their tire is the ghost tire Roll.jsx
+ * replays down the track. On a pad they bounce on their tire lying flat (drawn here for
+ * everyone, real avatars included). Hidden past the preset's draw distance.
  */
 export function RemotePlayers() {
   const camera = useThree((s) => s.camera)
   const size = useThree((s) => s.size)
   const bodyRef = useRef(null)
-  const boardsRef = useRef(null)
-  const glowsRef = useRef(null)
+  const tiresRef = useRef(null)
 
   const assets = useMemo(() => {
     // Smooth toy boxes: the shared toy material, so no extra shader program.
     const body = createBoxInstances(MAX_REMOTES * PARTS, sharedMaterials().toy, STYLE.SMOOTH)
     body.castShadow = true
-    // Riders' boards: the same mesh and material as yours.
-    const boards = createBoardMesh(MAX_REMOTES)
-    return { body, boards, glows: createGlowInstances(MAX_REMOTES, 0.6) }
+    // Trainers' tires, lying flat on their pads.
+    const tires = createTireMesh(MAX_REMOTES)
+    return { body, tires }
   }, [])
 
   useEffect(
     () => () => {
       disposeBlocks(assets.body)
-      disposeBoardMesh(assets.boards)
-      disposeGlow(assets.glows)
+      disposeTireMesh(assets.tires)
       hideNameplatesFrom(0)
     },
     [assets],
@@ -167,9 +156,8 @@ export function RemotePlayers() {
 
   useFrame((state, rawDelta) => {
     const body = bodyRef.current
-    const boards = boardsRef.current
-    const glows = glowsRef.current
-    if (!body || !boards || !glows) return
+    const tires = tiresRef.current
+    if (!body || !tires) return
     const delta = Math.min(rawDelta, 0.05)
     const settings = getQuality()
     const now = performance.now()
@@ -178,7 +166,7 @@ export function RemotePlayers() {
 
     let instance = 0
     let plate = 0
-    let rode = 0
+    let trainers = 0
     runtime.remotePets.length = 0
 
     for (const r of remotePlayers.values()) {
@@ -186,70 +174,41 @@ export function RemotePlayers() {
       const moved = _prev.distanceTo(r.position)
       r.speed = r.speed * 0.8 + (moved / Math.max(delta, 1e-3)) * 0.2
 
-      // --- Riding down the hill: a ghost of the slide they started ------------------
-      const ride = runtime.ghostSlides.get(r.sessionId)
-      const elapsed = ride ? (now - ride.startedAt) / 1000 : 0
-      if (ride && elapsed > ride.duration + SLIDE_RECOVERY) runtime.ghostSlides.delete(r.sessionId)
-      r.riding = Boolean(ride) && elapsed <= ride.duration + SLIDE_RECOVERY
-      r.shadow.visible = false
-      r.ride = r.riding ? ride : null
-      if (r.riding) {
-        // The same ride as theirs (path.rideState): dive, jumps, leans and skid. Their
-        // real avatar (RemoteAvatars) reads `r.ride` to ride along with it.
-        if (!ride.state) {
-          ride.fromMeter = meterAtZ(ride.z)
-          ride.startX = ride.x
-          ride.state = createRideState()
-        }
-        const st = rideState(elapsed, ride, riderLane(r.sessionId), ride.state)
-        _rider.copy(st.position)
-        const distance = camera.position.distanceTo(_rider)
-        if (distance < settings.remoteDrawDistance * RIDER_DISTANCE_SCALE && rode < MAX_REMOTES) {
-          rideTurn(st, _qRide)
-          // Their board, nose down the hill, glowing in its colour; it pops out at the start.
-          const pop = st.phase === 'launch' ? Math.min(1, st.launch / 0.3) : 1
-          _base.compose(_rider, _qBody.multiplyQuaternions(_qRide, BOARD_QUAT), _s.setScalar(pop))
-          boards.setMatrixAt(rode, _base)
-          boards.setStyle(rode, ride.boardId)
-          glows.setMatrixAt(rode, _m.copy(_base).multiply(_glowAt).scale(_s.setScalar(2.6 * settings.boardGlow)))
-          glows.setColorAt(rode, boardGlow(ride.boardId))
-          rode += 1
-          // Far away (no real avatar for them): the blocky stand-in, placed just as an
-          // avatar would be - diving on, lying on it, getting up to cheer.
-          if (!r.fullAvatar && instance + PARTS <= MAX_REMOTES * PARTS) {
-            riderBody(st, _qRide, FACE_DOWNHILL, standSide(ride.distance), _feet, _qBody)
-            _feet.applyQuaternion(_qRide).add(_rider)
-            _base.compose(_feet, _qBody.premultiply(_qRide), _s.set(1, 1, 1))
-            const arms = st.phase === 'launch' && st.launch < 0.5 ? 0.6 : st.stand > 0.5 ? -2.7 + Math.sin(t * 10) * 0.3 : -1.35
-            instance = writeFigure(body, instance, r, _base, st.stand > 0.5 ? 0 : Math.sin(t * 30) * 0.04, arms)
-          }
-          _v.copy(_rider).y += st.stand > 0.5 ? 2.3 : 1.4
-          plate = writeNameplate(plate, r.name, _v, distance, settings.remoteNameDistance, camera, size)
-        }
-        continue
-      }
-
       // --- In the lobby -----------------------------------------------------------
       const distance = camera.position.distanceTo(r.position)
-      // Someone mid-slide we never saw start (we joined late) isn't drawn at the top.
-      const visible = distance < settings.remoteDrawDistance && r.anim !== 'slide'
+      const visible = distance < settings.remoteDrawDistance
       r.shadow.visible = visible
       const running = r.anim === 'run'
 
+      // Training: their tire flat on the pad, and them bouncing on it.
+      let lift = 0
+      if (visible && running && trainers < MAX_REMOTES) {
+        padBounce(t, bounce)
+        const top = padTireTop(tireWidth(r.tireId))
+        lift = top * (1 - 0.15 * bounce.squash) + bounce.height
+        _v.set(r.position.x, r.position.y + top / 2, r.position.z)
+        _s.set(PAD_TIRE_SIZE * PAD_FLAT * tireWidth(r.tireId) * (1 - 0.3 * bounce.squash), PAD_TIRE_SIZE * (1 + 0.06 * bounce.squash), PAD_TIRE_SIZE)
+        tires.setMatrixAt(trainers, _m.compose(_v, LIE_FLAT, _s))
+        tires.setStyle(trainers, r.tireId)
+        trainers += 1
+      }
+
       // Players drawn as their real avatar (RemoteAvatars) skip the blocky figure.
       if (visible && !r.fullAvatar && instance + PARTS <= MAX_REMOTES * PARTS) {
-        const walking = running || r.speed > 0.6
-        if (walking) r.walkPhase += delta * (running ? 11 : 6 + Math.min(r.speed, 10) * 0.5)
+        const walking = !running && r.speed > 0.6
+        if (walking) r.walkPhase += delta * (6 + Math.min(r.speed, 10) * 0.5)
         const swing = walking ? Math.sin(r.walkPhase) * 0.9 : 0
-        _q.setFromAxisAngle(_up, running ? TREADMILL_YAW : r.yaw)
-        _base.compose(r.position, _q, _s.set(1, 1, 1))
-        instance = writeFigure(body, instance, r, _base, swing, null)
+        _q.setFromAxisAngle(_up, running ? PAD_YAW : r.yaw)
+        _v.set(r.position.x, r.position.y + lift, r.position.z)
+        _base.compose(_v, _q, _s.set(1, 1, 1))
+        // In the air off the tire: arms up, as in a jump.
+        instance = writeFigure(body, instance, r, _base, swing, running && bounce.height > 0.12 ? -2.4 : null)
       }
 
       // Name tag, just above the head (players are 1.8 tall).
       if (visible) {
-        _v.set(r.position.x, r.position.y + 2.05, r.position.z)
-        plate = writeNameplate(plate, r.name, _v, distance, settings.remoteNameDistance, camera, size)
+        _v.set(r.position.x, r.position.y + 2.05 + lift, r.position.z)
+        plate = writeNameplate(plate, r.name, _v, distance, settings.remoteNameDistance, camera, size, r.uid)
       }
 
       // Their pets: follow in formation, drawn by the shared pet renderer.
@@ -275,18 +234,14 @@ export function RemotePlayers() {
     body.count = instance
     body.instanceMatrix.needsUpdate = true
     if (body.instanceColor) body.instanceColor.needsUpdate = true
-    boards.count = rode
-    glows.count = rode
-    boards.instanceMatrix.needsUpdate = true
-    glows.instanceMatrix.needsUpdate = true
-    if (glows.instanceColor) glows.instanceColor.needsUpdate = true
+    tires.count = trainers
+    tires.instanceMatrix.needsUpdate = true
   })
 
   return (
     <>
       <primitive ref={bodyRef} object={assets.body} />
-      <primitive ref={glowsRef} object={assets.glows} />
-      <primitive ref={boardsRef} object={assets.boards} />
+      <primitive ref={tiresRef} object={assets.tires} />
     </>
   )
 }

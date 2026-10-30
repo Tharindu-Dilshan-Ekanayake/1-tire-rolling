@@ -9,18 +9,17 @@ import {
 } from 'three'
 
 import {
-  BELT_NEAR_X,
-  BELT_WIDTH,
-  CONSOLE_X,
   EGG_STANDS,
   FREE_REWARD,
   LEADERBOARDS,
+  PAD_COUNT,
+  PAD_RADIUS,
+  PAD_X,
+  padCenterZ,
   PORTALS,
+  ROLL_ZONE,
   SHOP,
-  SLIDE_START_Z,
-  SLIDE_ZONE,
-  TREADMILL_COUNT,
-  treadmillCenterZ,
+  TRACK_START_Z,
   WATERFALL,
 } from '@shared/world'
 
@@ -37,8 +36,8 @@ const MAP = { minX: -64, maxX: 64, minZ: -44, maxZ: 48 }
 const MAP_W = MAP.maxX - MAP.minX
 const MAP_H = MAP.maxZ - MAP.minZ
 
-/** Where the ground plane ends to the north: the slide's own floor takes over there. */
-export const GROUND_NORTH_EDGE = SLIDE_START_Z
+/** Where the ground plane ends to the north: the track's own floor takes over there. */
+export const GROUND_NORTH_EDGE = TRACK_START_Z
 
 function painter(ctx) {
   const rect = (r, color) => {
@@ -76,23 +75,23 @@ export function createGroundMap(maxTexture) {
 
   rect(MAP, PALETTE.plaza)
 
-  // Treadmill apron along the west side, under the machines.
-  const treadsMinZ = treadmillCenterZ(TREADMILL_COUNT - 1) - BELT_WIDTH / 2 - 2.5
-  const treadsMaxZ = treadmillCenterZ(0) + BELT_WIDTH / 2 + 2.5
-  bordered({ minX: CONSOLE_X - 3, maxX: BELT_NEAR_X + 3, minZ: treadsMinZ, maxZ: treadsMaxZ }, PALETTE.apron, PALETTE.apronEdge)
+  // The pads' apron along the west side, under them.
+  const padsMinZ = padCenterZ(PAD_COUNT - 1) - PAD_RADIUS - 2.5
+  const padsMaxZ = padCenterZ(0) + PAD_RADIUS + 2.5
+  const padsEast = PAD_X + PAD_RADIUS + 2.5
+  bordered({ minX: PAD_X - PAD_RADIUS - 2.5, maxX: padsEast, minZ: padsMinZ, maxZ: padsMaxZ }, PALETTE.apron, PALETTE.apronEdge)
 
-  // Paths: a walkway along the treadmill entrances, spawn up to the slide zone, spawn to
-  // the treadmills, the shop, the eggs over to the Sphinx, and a spur up to each portal:
-  // World 2's from the shop path, World 3's from the treadmill apron.
+  // Paths: a walkway along the pads, spawn up to the roll zone, spawn to the pads, the
+  // showroom, the eggs over to the Sphinx, and a spur up to the portal from the
+  // showroom path.
   const eggsZ = EGG_STANDS[0].z
-  const spurTo = { world2: -12, world3: treadsMinZ }
   const paths = [
-    { minX: BELT_NEAR_X + 3, maxX: BELT_NEAR_X + 8, minZ: treadsMinZ, maxZ: treadsMaxZ },
-    { minX: -5, maxX: 5, minZ: SLIDE_ZONE.maxZ, maxZ: 16 },
-    { minX: BELT_NEAR_X + 3, maxX: -5, minZ: 11, maxZ: 17 },
+    { minX: padsEast, maxX: padsEast + 5, minZ: padsMinZ, maxZ: padsMaxZ },
+    { minX: -5, maxX: 5, minZ: ROLL_ZONE.maxZ, maxZ: 16 },
+    { minX: padsEast + 5, maxX: -5, minZ: 11, maxZ: 17 },
     { minX: 5, maxX: SHOP.minX + 1, minZ: -12, maxZ: -6 },
     { minX: 16, maxX: 46, minZ: eggsZ - 2, maxZ: eggsZ + 2 },
-    ...PORTALS.map((p) => ({ minX: p.x - 3, maxX: p.x + 3, minZ: p.z + 3, maxZ: spurTo[p.id] })),
+    ...PORTALS.map((p) => ({ minX: p.x - 3, maxX: p.x + 3, minZ: p.z + 3, maxZ: -12 })),
   ]
   for (const p of paths) bordered(p, PALETTE.path, PALETTE.pathEdge)
   // Paths overlap; repaint the interiors so crossings don't show edges.
@@ -100,18 +99,16 @@ export function createGroundMap(maxTexture) {
     rect({ minX: p.minX + 1, maxX: p.maxX - 1, minZ: p.minZ + 1, maxZ: p.maxZ - 1 }, PALETTE.path)
   }
   bordered({ minX: -9, maxX: 9, minZ: 7, maxZ: 21 }, PALETTE.path, PALETTE.pathEdge)
-  // A paved apron in front of the slide zone.
-  bordered({ minX: SLIDE_ZONE.minX - 5, maxX: SLIDE_ZONE.maxX + 5, minZ: SLIDE_START_Z, maxZ: SLIDE_ZONE.maxZ + 6 }, PALETTE.apron, PALETTE.apronEdge)
+  // A paved apron in front of the roll zone.
+  bordered({ minX: ROLL_ZONE.minX - 5, maxX: ROLL_ZONE.maxX + 5, minZ: TRACK_START_Z, maxZ: ROLL_ZONE.maxZ + 6 }, PALETTE.apron, PALETTE.apronEdge)
 
   // Egg plaza and the shop yard.
   bordered({ minX: -18, maxX: 18, minZ: eggsZ - 4, maxZ: LEADERBOARDS[0].z - 1 }, PALETTE.apron, PALETTE.apronEdge)
   rect({ minX: SHOP.minX, maxX: SHOP.maxX, minZ: SHOP.minZ, maxZ: SHOP.maxZ }, PALETTE.shopFloor)
 
-  // World 3's is Halloween purple.
   for (const p of PORTALS) {
-    const spooky = p.id === 'world3'
-    disc(p.x, p.z, 6, spooky ? '#3b2a4f' : PALETTE.apronEdge)
-    disc(p.x, p.z, 5, spooky ? '#6b5590' : PALETTE.apron)
+    disc(p.x, p.z, 6, PALETTE.apronEdge)
+    disc(p.x, p.z, 5, PALETTE.apron)
   }
   disc(FREE_REWARD.x, FREE_REWARD.z, 4, PALETTE.apronEdge)
 

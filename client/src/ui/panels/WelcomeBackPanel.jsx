@@ -7,7 +7,7 @@ import { ChunkyButton } from '../hud/parts'
 import { GRADIENTS, u } from '../hud/style'
 import Panel from './Panel'
 
-/** "Keep training while you're offline!": what your treadmill earned while you were away. */
+/** "Keep training while you're offline!": what your pad earned while you were away. */
 export function WelcomeBackPanel() {
   const data = useGame((s) => s.panelData)
   const closePanel = useGame((s) => s.closePanel)
@@ -19,9 +19,9 @@ export function WelcomeBackPanel() {
           <StrokeText stroke={u(7)}>You kept training for {formatDuration(data.ms)} while away!</StrokeText>
         </span>
         <div className="flex items-center" style={{ gap: u(10), fontSize: u(84) }}>
-          <Icon name="slide" size={u(96)} />
+          <Icon name="heart" size={u(96)} />
           <StrokeText stroke={u(15)} gradient={GRADIENTS.gold}>
-            +{formatNumber(data.slide)} Slide
+            +{formatNumber(data.health)} Health
           </StrokeText>
         </div>
         <ChunkyButton gradient={GRADIENTS.greenButton} onClick={closePanel} style={{ height: u(90), width: u(320) }}>

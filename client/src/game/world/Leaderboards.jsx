@@ -74,7 +74,7 @@ function drawBoards(ctx, w, h, leaderboards, profile) {
 }
 
 /**
- * The three leaderboards behind the egg plaza. Frames are blocks; all three faces are
+ * The four leaderboards behind the egg plaza. Frames are blocks; all four faces are
  * one quad mesh on one canvas texture, redrawn when the boards update (once a minute).
  */
 export function Leaderboards() {

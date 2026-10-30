@@ -5,12 +5,13 @@ import { iconUrl } from './icons'
 import StrokeText from './StrokeText'
 
 const TIPS = [
-  'Run on a treadmill to gain Slide automatically!',
-  'Rebirth at max level for x1.5 more Slide and a higher level cap.',
-  'More Slide = longer slides = more Wins!',
-  'Spend Wins on better boards and eggs.',
-  'Pets multiply all the Slide you gain.',
-  'You gain +1 Slide every second you slide down the hill!',
+  'Stand on a training pad to gain Health automatically!',
+  'More Health = your tire rolls further and smashes tougher walls!',
+  'Rebirth at max level for x2, x3, x4... Health and a higher level cap.',
+  'Every wall you smash opens a new zone with more Wins per metre.',
+  'Spend Wins on stronger tires, pets and better pads.',
+  'Pets multiply all the Health you gain.',
+  'Your tire earns Health every second it rolls!',
 ]
 
 /**
@@ -50,7 +51,7 @@ export function LoadingScreen({ done }) {
       }}
     >
       <div className="pp-loading-disc" aria-hidden="true">
-        <img src={iconUrl('slide')} alt="" width="150" height="150" draggable={false} />
+        <img src={iconUrl('tire')} alt="" width="150" height="150" draggable={false} />
       </div>
 
       <h1 className="m-0 text-center leading-none" style={{ fontSize: 'clamp(40px, 9vw, 96px)', transform: 'rotate(-3deg)' }}>

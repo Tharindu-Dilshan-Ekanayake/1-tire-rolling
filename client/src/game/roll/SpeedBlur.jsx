@@ -2,7 +2,7 @@ import { useFrame, useThree } from '@react-three/fiber'
 import { useEffect, useRef } from 'react'
 import { BufferAttribute, BufferGeometry, Mesh, OrthographicCamera, Scene, ShaderMaterial, SRGBColorSpace, Vector2, WebGLRenderTarget } from 'three'
 
-import { slide } from './slideControl'
+import { roll } from './rollControl'
 
 const smoothstep = (a, b, x) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
@@ -83,11 +83,11 @@ function createPass(samples, antialias) {
 }
 
 /**
- * Motion blur down the sides of the screen while you slide fast: the scene is drawn
+ * Motion blur down the sides of the screen while your tire rolls fast: the scene is drawn
  * into a render target, then onto the screen through a zoom blur that leaves the
  * middle (the rider) sharp and smears the edges away from the canyon's vanishing
  * point, more the faster you go. Below BLUR_FROM it renders straight to the screen
- * as usual, so a slow slide costs nothing extra.
+ * as usual, so a slow roll costs nothing extra.
  *
  * Post-processing, so MEDIUM and HIGH only (`motionBlur` samples). Mounted only while
  * sliding: its frame callback has priority 1, which takes the rendering over from R3F
@@ -127,7 +127,7 @@ export function SpeedBlur({ samples, antialias }) {
     renderer.info.reset()
     const pass = passRef.current
     const delta = Math.min(rawDelta, 0.05)
-    const want = slide.active && !slide.stopped ? smoothstep(BLUR_FROM, BLUR_FULL, slide.speed) : 0
+    const want = roll.active && !roll.stopped && !roll.crashed ? smoothstep(BLUR_FROM, BLUR_FULL, roll.speed) : 0
     if (pass) pass.amount += (want - pass.amount) * (1 - Math.exp(-4 * delta))
     if (!pass || pass.amount < 0.01) {
       renderer.setRenderTarget(null)
